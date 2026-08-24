@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+motor==3.6.0
+pydantic-settings==2.7.1
+email-validator==2.2.0
+httpx==0.28.1
+sendgrid==6.11.0
+cryptography==43.0.3
+tzdata>=2025.2
+# Google OAuth dependency is parked for future reactivation.
+# google-auth[requests]==2.56.2

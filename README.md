@@ -1,0 +1,126 @@
+# Calendar Backend
+
+FastAPI service for a dynamic scheduling application backed by MongoDB.
+
+## Run Everything With Docker
+
+From this backend folder:
+
+```powershell
+docker compose build
+docker compose up -d
+```
+
+Open:
+
+- Frontend: `http://127.0.0.1:3000`
+- Login: `http://127.0.0.1:3000/login`
+- Backend API: `http://127.0.0.1:8001`
+- API docs: `http://127.0.0.1:8001/docs`
+
+## Twilio SendGrid Email OTP Setup
+
+Signup verification now uses Twilio SendGrid when `SENDGRID_EMAIL_ENABLED=true`.
+
+1. In SendGrid, finish sender authentication for the domain you will send from.
+2. Create a SendGrid API key with Mail Send access.
+3. Copy `.env.example` to `.env`.
+4. Fill the SendGrid values:
+
+```text
+SENDGRID_EMAIL_ENABLED=true
+SENDGRID_API_KEY=<your-sendgrid-api-key>
+SENDGRID_MAIL_SEND_URL=https://api.sendgrid.com/v3/mail/send
+SENDGRID_FROM_EMAIL=no-reply@your-domain.com
+SENDGRID_FROM_NAME=Calendar Booking
+SENDGRID_REPLY_TO_EMAIL=support@your-domain.com
+SENDGRID_TEMPLATE_ID=
+SENDGRID_SANDBOX_MODE=false
+```
+
+`SENDGRID_TEMPLATE_ID` is optional. If it is blank, the backend sends a built-in plain-text and HTML OTP email. If you set a dynamic template ID, include variables such as `{{otp}}`, `{{name}}`, `{{email}}`, `{{expires_in_minutes}}`, `{{app_name}}`, or `{{verification_code}}`.
+
+Then restart:
+
+```powershell
+docker compose up -d --build
+```
+
+## Product-Scoped Calendar Setup
+
+New and existing accounts are automatically attached to a default product the first time product-scoped APIs are used. Legacy `event_types`, `bookings`, and `contacts` without `product_id` are assigned to that default product during the same pass.
+
+Required environment values:
+
+```text
+APPLICATION_BASE_URL=http://127.0.0.1:3000
+ORGANIZATION_ID=default
+ORGANIZATION_EMAIL_DOMAIN=evofront.com
+EMAIL_ENABLED=false
+EMAIL_PROVIDER=sendgrid
+```
+
+`ORGANIZATION_EMAIL_DOMAIN` is enforced by the backend when adding product team members. `EMAIL_ENABLED=false` still creates meetings and invitation records, with delivery status `PENDING_EMAIL_INTEGRATION` and copyable invitation links.
+
+Main authenticated endpoints:
+
+- `GET /api/products`
+- `POST /api/products`
+- `GET /api/products/{product_id}`
+- `PATCH /api/products/{product_id}`
+- `GET /api/products/{product_id}/members`
+- `POST /api/products/{product_id}/members`
+- `PATCH /api/products/{product_id}/members/{membership_id}`
+- `DELETE /api/products/{product_id}/members/{membership_id}`
+- `GET /api/products/{product_id}/meetings`
+- `POST /api/products/{product_id}/meetings`
+- `GET /api/public/invitations/{token}`
+
+Existing dashboard endpoints accept `product_id` as a query parameter: `/api/dashboard/stats`, `/api/availability`, `/api/event-types`, `/api/bookings`, and `/api/contacts`.
+
+Legacy Google OAuth code is commented in `app/routers/auth.py`, `app/services/google_auth.py`, `app/core/config.py`, `docker-compose.yml`, and `requirements.txt` for future reactivation.
+
+## Signup Verification
+
+By default, signup verifies new users with a 6-digit OTP printed in the backend console. This keeps local signup working before SendGrid keys are configured.
+
+With Docker Compose, read the OTP with:
+
+```powershell
+docker compose logs backend
+```
+
+Look for:
+
+```text
+[SIGNUP OTP] email=user@example.com otp=123456 expires_in=10m
+```
+
+The backend never returns the OTP through the API. In console mode it prints the OTP to backend logs. In SendGrid mode it sends the OTP through Twilio SendGrid instead.
+
+Legacy MSG91 code is commented in `app/routers/auth.py`, `app/services/msg91.py`, `app/core/config.py`, `docker-compose.yml`, and `.env.example` for future reactivation.
+
+## Local Run
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+The API is available at `http://localhost:8000`, with Swagger docs at `http://localhost:8000/docs`.
+
+## Core Features
+
+- Email/password registration with console OTP locally, and SendGrid email OTP when enabled
+- Legacy Google OAuth and MSG91 email delivery parked in comments for future use
+- Product selector support with server-enforced product membership
+- Product-specific teams, availability, event links, bookings, contacts, meetings, and invitations
+- Provider-independent meeting invitation delivery layer with SendGrid support
+- Availability rules with weekly windows, buffer time, slot interval, and minimum notice
+- Event type CRUD with public scheduling links
+- Public slot lookup and booking creation
+- Owner booking dashboard and cancellation
+- Contact CRUD, plus automatic contact creation from confirmed bookings
