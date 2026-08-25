@@ -143,6 +143,7 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.client_bookings.create_index("assigned_member_id")
     await db.client_bookings.create_index("start_time_utc")
     await db.client_bookings.create_index("public_booking_reference", unique=True)
+    await db.client_bookings.create_index("active_slot_key", unique=True, sparse=True)
     await db.client_bookings.create_index("google_event_id")
     await db.client_bookings.create_index("google_sync_status")
     await db.client_bookings.create_index(
@@ -155,6 +156,9 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         unique=True,
         partialFilterExpression={"status": "scheduled"},
     )
+    await db.booking_assignment_history.create_index("booking_id")
+    await db.booking_assignment_history.create_index("product_id")
+    await db.booking_assignment_history.create_index("changed_by")
     await db.booking_notifications.create_index("product_id")
     await db.booking_notifications.create_index("booking_id")
     await db.booking_notifications.create_index("recipient_user_id")

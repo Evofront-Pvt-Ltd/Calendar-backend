@@ -8,10 +8,20 @@ from app.core.config import settings
 from app.core.products import (
     can_create_product,
     normalize_product_name,
+    normalize_workspace_domain,
+    normalize_workspace_domains,
     permissions_for_membership,
     validate_organization_email,
 )
-from app.routers.auth import EMAIL_ALREADY_REGISTERED_MESSAGE, normalize_auth_email, raise_email_already_registered, user_is_registered_and_verified
+from app.core.widget import approved_widget_origins, is_local_development_origin
+from app.routers.auth import (
+    EMAIL_ALREADY_REGISTERED_MESSAGE,
+    EMAIL_NOT_REGISTERED_MESSAGE,
+    PASSWORD_INCORRECT_MESSAGE,
+    normalize_auth_email,
+    raise_email_already_registered,
+    user_is_registered_and_verified,
+)
 from app.schemas import ClientBookingCreatePublic, MeetingCreate
 from app.services.email import BookingConfirmationMessage, BookingNotificationMessage, InvitationEmailMessage, email_service
 from app.services.product_availability import divide_coverage_minutes, local_window_to_utc, window_duration_minutes
@@ -53,6 +63,25 @@ class ProductSecurityTests(unittest.TestCase):
     def test_global_calendar_controller_can_create_products(self) -> None:
         self.assertTrue(can_create_product({"role": "calendar_controller"}))
 
+    def test_workspace_domain_normalization_uses_exact_origin(self) -> None:
+        self.assertEqual(normalize_workspace_domain("WWW.Example.com/path"), "https://www.example.com")
+        self.assertEqual(normalize_workspace_domain("http://localhost:3000/demo"), "http://localhost:3000")
+
+    def test_workspace_domain_list_deduplicates_origins(self) -> None:
+        self.assertEqual(
+            normalize_workspace_domains(["https://example.com/a", "https://example.com/b", "http://localhost:3000"]),
+            ["https://example.com", "http://localhost:3000"],
+        )
+
+    def test_widget_approved_origins_do_not_use_suffix_matching(self) -> None:
+        origins = approved_widget_origins({"approved_domains": ["https://websitex.com"]})
+        self.assertIn("https://websitex.com", origins)
+        self.assertNotIn("https://evil-websitex.com", origins)
+
+    def test_localhost_is_only_development_origin_shape(self) -> None:
+        self.assertTrue(is_local_development_origin("http://localhost:3000"))
+        self.assertFalse(is_local_development_origin("https://example.com"))
+
 
 class EmailOtpRegistrationTests(unittest.TestCase):
     def test_auth_email_normalization_trims_and_lowercases(self) -> None:
@@ -86,6 +115,10 @@ class EmailOtpRegistrationTests(unittest.TestCase):
         self.assertEqual(raised.exception.detail["code"], "EMAIL_ALREADY_REGISTERED")
         self.assertEqual(raised.exception.detail["message"], EMAIL_ALREADY_REGISTERED_MESSAGE)
         self.assertEqual(raised.exception.detail["nextAction"], "LOGIN")
+
+    def test_login_error_messages_are_specific(self) -> None:
+        self.assertEqual(EMAIL_NOT_REGISTERED_MESSAGE, "This email is not registered. Please sign up first.")
+        self.assertEqual(PASSWORD_INCORRECT_MESSAGE, "Password is incorrect.")
 
 
 class MeetingValidationTests(unittest.TestCase):

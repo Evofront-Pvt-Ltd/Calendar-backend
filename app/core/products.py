@@ -2,6 +2,7 @@ import re
 import secrets
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import HTTPException, status
 from pymongo.errors import DuplicateKeyError
@@ -71,6 +72,32 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+def normalize_workspace_domain(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Approved domains must be valid http or https origins",
+        )
+    hostname = parsed.hostname.lower()
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{hostname}{port}"
+
+
+def normalize_workspace_domains(values: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        origin = normalize_workspace_domain(value)
+        if origin and origin not in seen:
+            seen.add(origin)
+            normalized.append(origin)
+    return normalized
+
+
 def validate_organization_email(email: str) -> str:
     normalized = normalize_email(email)
     domain = settings.organization_email_domain.strip().lower().lstrip("@")
@@ -121,6 +148,14 @@ async def create_product_for_user(
     color: str = "#006bff",
     icon: str = "",
     status_value: str = "active",
+    approved_domains: list[str] | None = None,
+    controller_email: str = "",
+    support_email: str = "",
+    booking_mode: str = "instant",
+    widget_enabled: bool = True,
+    widget_button_label: str = "Book Now",
+    widget_action_label: str = "Schedule to connect team",
+    widget_position: str = "right",
 ) -> dict[str, Any]:
     await ensure_user_metadata(user)
     db = get_database()
@@ -142,6 +177,14 @@ async def create_product_for_user(
         "status": status_value,
         "availability": availability,
         "public_booking_token": await unique_public_booking_token(),
+        "approved_domains": normalize_workspace_domains(approved_domains),
+        "controller_email": normalize_email(controller_email) if controller_email else "",
+        "support_email": normalize_email(support_email) if support_email else "",
+        "booking_mode": booking_mode if booking_mode in {"instant", "approval"} else "instant",
+        "widget_enabled": bool(widget_enabled),
+        "widget_button_label": (widget_button_label or "Book Now").strip(),
+        "widget_action_label": (widget_action_label or "Schedule to connect team").strip(),
+        "widget_position": widget_position if widget_position in {"right", "left"} else "right",
         "created_by": str(user["_id"]),
         "created_at": timestamp,
         "updated_at": timestamp,

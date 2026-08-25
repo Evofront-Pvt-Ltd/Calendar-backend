@@ -16,6 +16,7 @@ from app.routers import (
     products,
     public,
     sendgrid_webhooks,
+    widget,
 )
 
 
@@ -45,6 +46,7 @@ app.include_router(contacts.router)
 app.include_router(dashboard.router)
 app.include_router(google_integrations.router)
 app.include_router(public.router)
+app.include_router(widget.router)
 app.include_router(sendgrid_webhooks.router)
 
 

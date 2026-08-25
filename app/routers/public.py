@@ -23,6 +23,7 @@ from app.schemas import (
 from app.services.product_availability import (
     build_product_slots,
     create_client_booking,
+    create_pending_client_booking,
     ensure_policy,
     client_booking_to_out,
 )
@@ -129,7 +130,9 @@ async def public_landing_products() -> list[PublicLandingProductOut]:
                 support_start_time=policy["support_start_time"],
                 support_end_time=policy["support_end_time"],
                 appointment_duration_minutes=policy["appointment_duration_minutes"],
-                booking_mode=(settings.public_booking_mode or "instant").lower(),
+                booking_mode=str(product.get("booking_mode") or settings.public_booking_mode or "instant").lower(),
+                widget_button_label=product.get("widget_button_label") or "Book Now",
+                widget_action_label=product.get("widget_action_label") or "Schedule to connect team",
             )
         )
     return products
@@ -154,7 +157,11 @@ async def public_product_slots(
 @router.post("/products/{booking_token}/book", response_model=ClientBookingOut, status_code=status.HTTP_201_CREATED)
 async def public_product_book(booking_token: str, payload: ClientBookingCreatePublic) -> ClientBookingOut:
     product = await find_public_product(booking_token)
-    booking = await create_client_booking(product, payload)
+    mode = str(product.get("booking_mode") or settings.public_booking_mode or "instant").lower()
+    if mode in {"approval", "approval_required", "pending_approval"}:
+        booking = await create_pending_client_booking(product, payload, widget_id=booking_token)
+    else:
+        booking = await create_client_booking(product, payload)
     return ClientBookingOut(**await client_booking_to_out(booking))
 
 

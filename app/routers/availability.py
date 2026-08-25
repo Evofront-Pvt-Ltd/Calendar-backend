@@ -11,6 +11,8 @@ from app.schemas import (
     AvailabilityExceptionCreate,
     AvailabilityExceptionOut,
     AvailabilityIn,
+    BookingAssignmentUpdate,
+    BookingDecisionRequest,
     CancelBookingRequest,
     ClientBookingOut,
     GenerateCoverageRequest,
@@ -22,10 +24,13 @@ from app.schemas import (
 )
 from app.services.product_availability import (
     audit_availability,
+    approve_client_booking,
+    assign_client_booking,
     cancel_client_booking,
     client_booking_to_out,
     ensure_policy,
     generate_equal_coverage,
+    reject_client_booking,
     team_availability_context,
 )
 from app.services.scheduling import normalize_timezone, timezone_or_400
@@ -289,6 +294,48 @@ async def cancel_product_client_booking(
         reason=payload.reason,
         permissions=context.permissions,
     )
+    return ClientBookingOut(**await client_booking_to_out(booking))
+
+
+@router.patch("/bookings/{booking_id}/assignment", response_model=ClientBookingOut)
+async def assign_product_client_booking(
+    booking_id: str,
+    payload: BookingAssignmentUpdate,
+    product_id: str = Query(),
+    user: dict = Depends(get_current_user),
+) -> ClientBookingOut:
+    context = await product_context(user, product_id, "manage_availability", require_active=True)
+    booking = await assign_client_booking(
+        context.product,
+        user,
+        booking_id,
+        member_id=payload.member_id,
+        reason=payload.reason,
+    )
+    return ClientBookingOut(**await client_booking_to_out(booking))
+
+
+@router.post("/bookings/{booking_id}/approve", response_model=ClientBookingOut)
+async def approve_product_client_booking(
+    booking_id: str,
+    payload: BookingDecisionRequest,
+    product_id: str = Query(),
+    user: dict = Depends(get_current_user),
+) -> ClientBookingOut:
+    context = await product_context(user, product_id, "manage_availability", require_active=True)
+    booking = await approve_client_booking(context.product, user, booking_id, reason=payload.reason)
+    return ClientBookingOut(**await client_booking_to_out(booking))
+
+
+@router.post("/bookings/{booking_id}/reject", response_model=ClientBookingOut)
+async def reject_product_client_booking(
+    booking_id: str,
+    payload: BookingDecisionRequest,
+    product_id: str = Query(),
+    user: dict = Depends(get_current_user),
+) -> ClientBookingOut:
+    context = await product_context(user, product_id, "manage_availability", require_active=True)
+    booking = await reject_client_booking(context.product, user, booking_id, reason=payload.reason)
     return ClientBookingOut(**await client_booking_to_out(booking))
 
 

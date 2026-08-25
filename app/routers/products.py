@@ -17,6 +17,7 @@ from app.core.products import (
     unique_user_slug,
     validate_organization_email,
     normalize_product_name,
+    normalize_workspace_domains,
 )
 from app.core.security import get_current_user
 from app.core.utils import as_utc, now_utc, object_id, public_doc
@@ -183,6 +184,14 @@ async def create_product(payload: ProductCreate, user: dict = Depends(get_curren
         color=payload.color,
         icon=payload.icon,
         status_value=payload.status,
+        approved_domains=payload.approved_domains,
+        controller_email=payload.controller_email,
+        support_email=payload.support_email,
+        booking_mode=payload.booking_mode,
+        widget_enabled=payload.widget_enabled,
+        widget_button_label=payload.widget_button_label,
+        widget_action_label=payload.widget_action_label,
+        widget_position=payload.widget_position,
     )
     membership = await get_database().product_memberships.find_one(
         {"product_id": str(product["_id"]), "user_id": str(user["_id"]), "status": "active"}
@@ -221,6 +230,16 @@ async def update_product(product_id: str, payload: ProductUpdate, user: dict = D
         updates["description"] = updates["description"].strip()
     if "icon" in updates and updates["icon"] is not None:
         updates["icon"] = updates["icon"].strip()
+    if "approved_domains" in updates and updates["approved_domains"] is not None:
+        updates["approved_domains"] = normalize_workspace_domains(updates["approved_domains"])
+    for email_field in ("controller_email", "support_email"):
+        if email_field in updates and updates[email_field] is not None:
+            updates[email_field] = updates[email_field].strip().lower()
+    for label_field in ("widget_button_label", "widget_action_label"):
+        if label_field in updates and updates[label_field] is not None:
+            updates[label_field] = updates[label_field].strip()
+            if not updates[label_field]:
+                updates[label_field] = "Book Now" if label_field == "widget_button_label" else "Schedule to connect team"
     updates["updated_at"] = now_utc()
     await get_database().products.update_one({"_id": context.product["_id"]}, {"$set": updates})
     product = await get_database().products.find_one({"_id": context.product["_id"]})

@@ -80,6 +80,43 @@ Existing dashboard endpoints accept `product_id` as a query parameter: `/api/das
 
 Legacy Google OAuth code is commented in `app/routers/auth.py`, `app/services/google_auth.py`, `app/core/config.py`, `docker-compose.yml`, and `requirements.txt` for future reactivation.
 
+## Embeddable Workspace Widget
+
+Each product can act as a v1 workspace for an external website. Configure these values from Product Settings:
+
+- Approved website domains, for example `https://www.websitex.com`
+- Controller email, which receives new booking requests for that workspace
+- Support email
+- Booking mode: `instant` or `approval`
+- Widget enabled/disabled
+- Widget button/action labels and side position
+
+Install the widget on the approved website with the product's public widget ID:
+
+```html
+<script
+  src="https://your-calendar-platform.example.com/widget.js"
+  data-workspace-id="public_widget_id"
+  data-position="right"
+  async>
+</script>
+```
+
+The snippet contains no secrets. The backend maps `data-workspace-id` to one active product/workspace and validates the host origin against that product's approved domains before returning config, availability, or creating a booking. Localhost and `127.0.0.1` are allowed as development origins when no approved domains are configured.
+
+Widget endpoints:
+
+- `GET /api/widget/{public_widget_id}/config`
+- `GET /api/widget/{public_widget_id}/products`
+- `GET /api/widget/{public_widget_id}/availability?date=YYYY-MM-DD`
+- `POST /api/widget/{public_widget_id}/bookings`
+
+Controller endpoints for workspace bookings:
+
+- `PATCH /api/availability/bookings/{booking_id}/assignment?product_id={product_id}`
+- `POST /api/availability/bookings/{booking_id}/approve?product_id={product_id}`
+- `POST /api/availability/bookings/{booking_id}/reject?product_id={product_id}`
+
 ## Signup Verification
 
 By default, signup verifies new users with a 6-digit OTP printed in the backend console. This keeps local signup working before SendGrid keys are configured.

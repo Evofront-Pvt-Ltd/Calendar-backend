@@ -37,6 +37,8 @@ OTP_EXPIRY_MINUTES = 10
 OTP_RESEND_COOLDOWN_SECONDS = 60
 OTP_MAX_ATTEMPTS = 5
 EMAIL_ALREADY_REGISTERED_MESSAGE = "This email is already registered and verified. Please log in."
+EMAIL_NOT_REGISTERED_MESSAGE = "This email is not registered. Please sign up first."
+PASSWORD_INCORRECT_MESSAGE = "Password is incorrect."
 
 
 def normalize_auth_email(value: str) -> str:
@@ -436,8 +438,10 @@ async def register_verify(payload: RegisterVerifyRequest) -> AuthResponse:
 async def login(payload: LoginRequest) -> AuthResponse:
     db = get_database()
     user = await db.users.find_one({"email": normalize_auth_email(payload.email)})
-    if user is None or not verify_password(payload.password, user.get("password_hash", "")):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=EMAIL_NOT_REGISTERED_MESSAGE)
+    if not verify_password(payload.password, user.get("password_hash", "")):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=PASSWORD_INCORRECT_MESSAGE)
     if user.get("email_verified") is False:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Please verify your email before continuing")
     return auth_response(user)

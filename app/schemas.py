@@ -206,7 +206,7 @@ class ClientBookingOut(BaseModel):
     end_time_utc: datetime
     client_timezone: str
     product_timezone: str
-    status: Literal["scheduled", "cancelled", "rescheduled"] = "scheduled"
+    status: Literal["pending_approval", "scheduled", "cancelled", "rescheduled", "rejected"] = "scheduled"
     assignment_strategy: str
     assignment_reason: str = ""
     public_booking_reference: str
@@ -240,6 +240,22 @@ class BookingNotificationOut(BaseModel):
     idempotency_key: str
     created_at: datetime
     updated_at: datetime
+
+
+class BookingAssignmentHistoryOut(BaseModel):
+    id: str
+    booking_id: str
+    organization_id: str
+    product_id: str
+    previous_product_id: str = ""
+    new_product_id: str = ""
+    previous_team_id: str = ""
+    new_team_id: str = ""
+    previous_member_id: str = ""
+    new_member_id: str = ""
+    changed_by: str
+    reason: str = ""
+    changed_at: datetime
 
 
 class GoogleCalendarConnectOut(BaseModel):
@@ -284,6 +300,7 @@ class TeamAvailabilityOut(BaseModel):
     available_slots: list[AvailableSlotOut] = Field(default_factory=list)
     bookings: list[ClientBookingOut] = Field(default_factory=list)
     notifications: list[BookingNotificationOut] = Field(default_factory=list)
+    assignment_history: list[BookingAssignmentHistoryOut] = Field(default_factory=list)
     exceptions: list[AvailabilityExceptionOut] = Field(default_factory=list)
 
 
@@ -308,6 +325,21 @@ class PublicLandingProductOut(BaseModel):
     support_end_time: str
     appointment_duration_minutes: int
     booking_mode: str = "instant"
+    widget_button_label: str = "Book Now"
+    widget_action_label: str = "Schedule to connect team"
+
+
+class WidgetConfigOut(BaseModel):
+    workspace_name: str
+    public_widget_id: str
+    enabled: bool
+    button_label: str = "Book Now"
+    action_label: str = "Schedule to connect team"
+    position: Literal["right", "left"] = "right"
+    primary_color: str = "#006bff"
+    booking_mode: str = "instant"
+    timezone: str = "Asia/Kolkata"
+    product: PublicLandingProductOut
 
 
 class UserPublic(BaseModel):
@@ -369,6 +401,14 @@ class ProductCreate(BaseModel):
     icon: str = Field(default="", max_length=10)
     color: str = Field(default="#006bff", pattern=r"^#[0-9a-fA-F]{6}$")
     status: Literal["active", "inactive"] = "active"
+    approved_domains: list[str] = Field(default_factory=list, max_length=25)
+    controller_email: str = Field(default="", max_length=254)
+    support_email: str = Field(default="", max_length=254)
+    booking_mode: Literal["instant", "approval"] = "instant"
+    widget_enabled: bool = True
+    widget_button_label: str = Field(default="Book Now", max_length=40)
+    widget_action_label: str = Field(default="Schedule to connect team", max_length=80)
+    widget_position: Literal["right", "left"] = "right"
 
 
 class ProductUpdate(BaseModel):
@@ -377,6 +417,14 @@ class ProductUpdate(BaseModel):
     icon: str | None = Field(default=None, max_length=10)
     color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     status: Literal["active", "inactive"] | None = None
+    approved_domains: list[str] | None = Field(default=None, max_length=25)
+    controller_email: str | None = Field(default=None, max_length=254)
+    support_email: str | None = Field(default=None, max_length=254)
+    booking_mode: Literal["instant", "approval"] | None = None
+    widget_enabled: bool | None = None
+    widget_button_label: str | None = Field(default=None, max_length=40)
+    widget_action_label: str | None = Field(default=None, max_length=80)
+    widget_position: Literal["right", "left"] | None = None
 
 
 class ProductOut(BaseModel):
@@ -394,8 +442,25 @@ class ProductOut(BaseModel):
     member_count: int = 0
     public_booking_token: str = ""
     public_booking_path: str = ""
+    approved_domains: list[str] = Field(default_factory=list)
+    controller_email: str = ""
+    support_email: str = ""
+    booking_mode: Literal["instant", "approval"] = "instant"
+    widget_enabled: bool = True
+    widget_button_label: str = "Book Now"
+    widget_action_label: str = "Schedule to connect team"
+    widget_position: Literal["right", "left"] = "right"
     created_at: datetime
     updated_at: datetime
+
+
+class BookingAssignmentUpdate(BaseModel):
+    member_id: str = Field(min_length=12, max_length=64)
+    reason: str = Field(default="", max_length=300)
+
+
+class BookingDecisionRequest(BaseModel):
+    reason: str = Field(default="", max_length=300)
 
 
 class ProductMemberCreate(BaseModel):
