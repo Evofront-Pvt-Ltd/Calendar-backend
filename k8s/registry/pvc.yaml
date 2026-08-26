@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: calendar-registry-data
+  namespace: calendar
+  labels:
+    app: calendar-registry
+    app.kubernetes.io/part-of: calendar
+    app.kubernetes.io/name: calendar-registry
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

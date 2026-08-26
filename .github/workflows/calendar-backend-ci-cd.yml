@@ -1,0 +1,261 @@
+name: Calendar Backend CI/CD
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "app/**"
+      - "tests/**"
+      - "requirements.txt"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "k8s/namespace.yaml"
+      - "k8s/configmap.yaml"
+      - "k8s/mongodb.yaml"
+      - "k8s/deployment.yaml"
+      - "k8s/service.yaml"
+      - "k8s/ingress.yaml"
+      - "k8s/rbac.yaml"
+      - ".github/workflows/calendar-backend-ci-cd.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: calendar-backend-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  REGISTRY_HOST: calendar-registry.212.2.249.45.nip.io
+  IMAGE_NAME: calendar-backend
+  NAMESPACE: calendar-backend
+  BACKEND_URL: https://calendar-api.212.2.249.45.nip.io
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Verify Python version
+        run: |
+          set -euo pipefail
+          python --version
+          python -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else f'Expected Python 3.12 from Dockerfile, got {sys.version}')"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Lint
+        run: |
+          set -euo pipefail
+          echo "No lint tool is declared in the backend repository. Skipping lint."
+
+      - name: Unit tests
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -v
+
+      - name: Build container image
+        run: |
+          set -euo pipefail
+          docker build -t "${IMAGE_NAME}:${GITHUB_SHA}" .
+
+      - name: Validate container
+        run: |
+          set -euo pipefail
+          if docker ps -a --format '{{.Names}}' | grep -qx calendar-mongo-validate; then
+            docker rm -f calendar-mongo-validate
+          fi
+          if docker ps -a --format '{{.Names}}' | grep -qx calendar-backend-validate; then
+            docker rm -f calendar-backend-validate
+          fi
+          if docker network ls --format '{{.Name}}' | grep -qx calendar-validate; then
+            docker network rm calendar-validate
+          fi
+          docker network create calendar-validate
+          docker run -d --name calendar-mongo-validate --network calendar-validate mongo:7
+          set +e
+          mongo_ready=0
+          for i in $(seq 1 30); do
+            if docker exec calendar-mongo-validate mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'; then
+              mongo_ready=1
+              break
+            fi
+            sleep 2
+          done
+          set -e
+          if [ "${mongo_ready}" != "1" ]; then
+            echo "::error::MongoDB sidecar used for container validation did not become ready"
+            docker logs calendar-mongo-validate
+            docker rm -f calendar-mongo-validate
+            docker network rm calendar-validate
+            exit 1
+          fi
+          docker run -d --name calendar-backend-validate --network calendar-validate -p 127.0.0.1:8000:8000 \
+            -e MONGODB_URL=mongodb://calendar-mongo-validate:27017 \
+            -e MONGODB_DB=calendar_booking \
+            -e JWT_SECRET=ci-container-validation-not-for-production \
+            -e ENVIRONMENT=ci \
+            "${IMAGE_NAME}:${GITHUB_SHA}"
+          set +e
+          ready=0
+          for i in $(seq 1 40); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8000/health | grep -q '"status":"ok"'; then
+              ready=1
+              break
+            fi
+            sleep 3
+          done
+          set -e
+          if [ "${ready}" != "1" ]; then
+            echo "::error::Backend container did not serve GET /health"
+            docker logs calendar-backend-validate
+            docker rm -f calendar-backend-validate calendar-mongo-validate
+            docker network rm calendar-validate
+            exit 1
+          fi
+          docker rm -f calendar-backend-validate calendar-mongo-validate
+          docker network rm calendar-validate
+
+      - name: Authenticate to private registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Push immutable image and record digest
+        id: image
+        run: |
+          set -euo pipefail
+          REMOTE_TAG="${REGISTRY_HOST}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker tag "${IMAGE_NAME}:${GITHUB_SHA}" "${REMOTE_TAG}"
+          docker push "${REMOTE_TAG}"
+          DIGEST_REF="$(docker inspect --format='{{index .RepoDigests 0}}' "${REMOTE_TAG}")"
+          if [ -z "${DIGEST_REF}" ]; then
+            echo "::error::Could not resolve pushed image digest"
+            exit 1
+          fi
+          echo "digest_ref=${DIGEST_REF}" >> "$GITHUB_OUTPUT"
+          echo "Pushed ${DIGEST_REF}"
+
+      - name: Configure kubectl
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KUBE_CONFIG_DATA}" ]; then
+            echo "::error::KUBECONFIG secret is required"
+            exit 1
+          fi
+          mkdir -p "$HOME/.kube"
+          if printf '%s' "${KUBE_CONFIG_DATA}" | grep -qE '^apiVersion:'; then
+            printf '%s' "${KUBE_CONFIG_DATA}" > "$HOME/.kube/config"
+          else
+            printf '%s' "${KUBE_CONFIG_DATA}" | base64 -d > "$HOME/.kube/config"
+            if ! grep -qE '^apiVersion:' "$HOME/.kube/config"; then
+              echo "::error::KUBECONFIG secret must be raw kubeconfig YAML or base64 kubeconfig YAML"
+              exit 1
+            fi
+          fi
+          chmod 600 "$HOME/.kube/config"
+          export KUBECONFIG="$HOME/.kube/config"
+          kubectl config current-context >/dev/null
+          kubectl cluster-info >/dev/null
+
+      - name: Deploy to Kubernetes
+        env:
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          CALENDAR_JWT_SECRET: ${{ secrets.CALENDAR_JWT_SECRET }}
+          CALENDAR_SENDGRID_API_KEY: ${{ secrets.CALENDAR_SENDGRID_API_KEY }}
+          CALENDAR_SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY: ${{ secrets.CALENDAR_SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY }}
+          CALENDAR_GOOGLE_CLIENT_SECRET: ${{ secrets.CALENDAR_GOOGLE_CLIENT_SECRET }}
+          CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY: ${{ secrets.CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY }}
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$HOME/.kube/config"
+          if [ -z "${CALENDAR_JWT_SECRET}" ]; then
+            echo "::error::CALENDAR_JWT_SECRET secret is required"
+            exit 1
+          fi
+          DIGEST_REF="${{ steps.image.outputs.digest_ref }}"
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/rbac.yaml
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/mongodb.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/ingress.yaml
+          kubectl -n "${NAMESPACE}" create secret docker-registry calendar-registry-pull \
+            --docker-server="${REGISTRY_HOST}" \
+            --docker-username="${REGISTRY_USERNAME}" \
+            --docker-password="${REGISTRY_PASSWORD}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "${NAMESPACE}" create secret generic calendar-backend-secrets \
+            --from-literal=JWT_SECRET="${CALENDAR_JWT_SECRET}" \
+            --from-literal=SENDGRID_API_KEY="${CALENDAR_SENDGRID_API_KEY}" \
+            --from-literal=SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY="${CALENDAR_SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY}" \
+            --from-literal=GOOGLE_CLIENT_SECRET="${CALENDAR_GOOGLE_CLIENT_SECRET}" \
+            --from-literal=GOOGLE_TOKEN_ENCRYPTION_KEY="${CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          sed "s|image: REGISTRY_IMAGE_REF|image: ${DIGEST_REF}|" k8s/deployment.yaml | kubectl apply -f -
+
+      - name: Wait for MongoDB and backend rollout
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$HOME/.kube/config"
+          if ! kubectl -n "${NAMESPACE}" rollout status deployment/mongodb --timeout=240s; then
+            echo "::error::MongoDB rollout failed"
+            kubectl -n "${NAMESPACE}" get deploy,pods,pvc,svc -o wide
+            kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -n 80
+            kubectl -n "${NAMESPACE}" logs -l app=mongodb --tail=150
+            exit 1
+          fi
+          if ! kubectl -n "${NAMESPACE}" rollout status deployment/calendar-backend --timeout=300s; then
+            echo "::error::Backend rollout failed"
+            kubectl -n "${NAMESPACE}" get deploy,rs,pods,svc,ingress -o wide
+            kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -n 80
+            kubectl -n "${NAMESPACE}" logs -l app=calendar-backend --tail=150
+            exit 1
+          fi
+          READY="$(kubectl -n "${NAMESPACE}" get deploy calendar-backend -o jsonpath='{.status.readyReplicas}')"
+          DESIRED="$(kubectl -n "${NAMESPACE}" get deploy calendar-backend -o jsonpath='{.spec.replicas}')"
+          if [ "${READY}" != "${DESIRED}" ]; then
+            echo "::error::Ready replica count ${READY} does not match desired ${DESIRED}"
+            exit 1
+          fi
+
+      - name: Verify HTTPS health endpoint
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$HOME/.kube/config"
+          kubectl -n "${NAMESPACE}" get ingress calendar-backend
+          set +e
+          ok=0
+          body=""
+          for i in $(seq 1 36); do
+            body="$(curl -sS --max-time 15 "${BACKEND_URL}/health")"
+            if printf '%s' "${body}" | grep -q '"status":"ok"'; then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+          set -e
+          if [ "${ok}" != "1" ]; then
+            echo "::error::HTTPS GET ${BACKEND_URL}/health did not return status ok"
+            kubectl -n "${NAMESPACE}" get ingress,secret,pods -o wide
+            exit 1
+          fi
+          echo "Backend HTTPS health check passed: ${BACKEND_URL}/health"

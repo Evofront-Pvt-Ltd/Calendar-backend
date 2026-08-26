@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: calendar-cicd
+  namespace: calendar
+  labels:
+    app.kubernetes.io/part-of: calendar
+    app.kubernetes.io/name: calendar-registry
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: calendar-registry-maintain
+  namespace: calendar
+  labels:
+    app.kubernetes.io/part-of: calendar
+    app.kubernetes.io/name: calendar-registry
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - configmaps
+      - secrets
+      - events
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: calendar-registry-maintain
+  namespace: calendar
+  labels:
+    app.kubernetes.io/part-of: calendar
+    app.kubernetes.io/name: calendar-registry
+subjects:
+  - kind: ServiceAccount
+    name: calendar-cicd
+    namespace: calendar
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: calendar-registry-maintain
