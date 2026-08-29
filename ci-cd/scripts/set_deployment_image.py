@@ -41,11 +41,16 @@ def main() -> int:
         rf"\s+newTag: ).*",
         re.MULTILINE,
     )
-    if not pattern.search(text):
+    match = pattern.search(text)
+    if not match:
         print(f"error: image entry for {image_name} not found in {path}", file=sys.stderr)
         return 1
 
-    updated = pattern.sub(rf"\1{args.repository}\2{args.tag}", text, count=1)
+    updated = (
+        text[: match.start()]
+        + f"{match.group(1)}{args.repository}{match.group(2)}{args.tag}"
+        + text[match.end() :]
+    )
     path.write_text(updated, encoding="utf-8")
     print(f"Updated {path}: {args.repository}:{args.tag}")
     return 0
