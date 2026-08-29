@@ -38,6 +38,8 @@ Configure these on `Evofront-Pvt-Ltd/Calendar-backend`:
 | `CALENDAR_GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
 | `CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY` | No | Fernet key for stored Google tokens |
 
+See [docs/SECRETS_SETUP.md](docs/SECRETS_SETUP.md) for a full mapping of dev-team variables to GitHub secrets vs ConfigMap.
+
 ## One-time cluster bootstrap
 
 Complete these steps on the shared Civo `pods-cluster` **before** creating Argo CD applications.
