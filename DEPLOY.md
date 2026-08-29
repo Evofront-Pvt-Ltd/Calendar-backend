@@ -81,9 +81,13 @@ MongoDB storage is **not** managed by Argo CD (PVC size is immutable after bind)
 kubectl apply -f k8s/bootstrap/mongodb-pvc.yaml
 kubectl -n calendar-backend annotate pvc calendar-mongodb-data `
   argocd.argoproj.io/sync-options=Delete=false --overwrite
+kubectl -n calendar-backend label pvc calendar-mongodb-data `
+  argocd.argoproj.io/instance-
+kubectl -n calendar-backend annotate pvc calendar-mongodb-data `
+  argocd.argoproj.io/tracking-id-
 ```
 
-The deploy workflow also runs `ci-cd/scripts/ensure_mongodb_pvc.sh` to create or annotate this PVC automatically.
+The deploy workflow also runs `ci-cd/scripts/ensure_mongodb_pvc.sh` to create or detach this PVC automatically. After detaching, **Refresh** the Argo CD app and the PVC should disappear from the resource tree.
 
 ### 4. Create application secrets
 
