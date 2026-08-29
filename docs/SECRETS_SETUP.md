@@ -15,8 +15,16 @@ These live in **`k8s/base/configmap.yaml`**. Argo CD deploys them automatically 
 | `SENDGRID_FROM_EMAIL` | `SENDGRID_FROM_EMAIL` | `mukesh.g@evofront.com` |
 | `SENDGRID_FROM_NAME` | `SENDGRID_FROM_NAME` | `Calendar Booking` |
 | `SENDGRID_REPLY_TO_EMAIL` | `SENDGRID_REPLY_TO_EMAIL` | `mukesh.g@evofront.com` |
+| `GOOGLE_CALENDAR_ENABLED` | `GOOGLE_CALENDAR_ENABLED` | `true` |
+| `GOOGLE_CLIENT_ID` | `GOOGLE_CLIENT_ID` | OAuth client ID from Google Cloud Console |
+| `GOOGLE_REDIRECT_URI` | `GOOGLE_REDIRECT_URI` | `https://calendar-api.212.2.249.45.nip.io/api/integrations/google/callback` |
+| `GOOGLE_CALENDAR_SCOPES` | `GOOGLE_CALENDAR_SCOPES` | calendar.events + calendar.freebusy |
+| `GOOGLE_CALENDAR_ID` | `GOOGLE_CALENDAR_ID` | `primary` |
+| `APP_FRONTEND_URL` | `APP_FRONTEND_URL` | `https://calendar.212.2.249.45.nip.io` |
 
 Edit `k8s/base/configmap.yaml`, commit, push to `develop`, then sync in Argo CD.
+
+**Google OAuth:** add the staging redirect URI above to the Google Cloud OAuth client (Authorized redirect URIs). Localhost URIs from dev `.env` are not used in staging.
 
 ## Secret settings (never in git)
 
