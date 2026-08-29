@@ -8,8 +8,8 @@ GitOps deployment for the Calendar backend on the Civo `pods-cluster` using **Gi
 develop push
   -> GitHub Actions CI (test, build, validate)
   -> push image to Docker Hub as <username>/calendar-backend:<git-sha>
-  -> commit k8s/overlays/staging/kustomization.yaml
-  -> Argo CD syncs k8s/overlays/staging to namespace calendar-backend
+  -> kubectl rollout with SHA tag (no Git manifest commits)
+  -> HTTPS health verification and application URL summary
 ```
 
 Argo CD owns cluster deployment. GitHub Actions does **not** run `kubectl apply` during normal releases.
@@ -31,9 +31,9 @@ Configure these on `Evofront-Pvt-Ltd/Calendar-backend`:
 | --- | --- | --- |
 | `DOCKERHUB_USERNAME` | Yes | Docker Hub account used to publish images |
 | `DOCKERHUB_PASSWORD` | Yes | Docker Hub password or access token |
-| `GITHUB_TOKEN` | Built-in | Used to commit manifest image updates |
+| `KUBECONFIG` | Yes | Civo pods-cluster kubeconfig for rollout and pull secrets |
 
-Application secrets are **not** stored in GitHub Actions for deploy. Create them once in Kubernetes (see below).
+Application secrets (`JWT_SECRET`, SendGrid, Google) are created once in the cluster (step 3 below), not stored in GitHub Actions.
 
 ## One-time cluster bootstrap
 

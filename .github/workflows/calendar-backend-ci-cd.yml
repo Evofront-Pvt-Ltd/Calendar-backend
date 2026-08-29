@@ -17,6 +17,7 @@ env:
   API_HEALTH_URL: https://calendar-api.212.2.249.45.nip.io/health
   APP_URL: https://calendar.212.2.249.45.nip.io
   APP_HEALTH_URL: https://calendar.212.2.249.45.nip.io/
+  ARGOCD_URL: https://argocd.212.2.249.45.nip.io
   PYTHON_VERSION: "3.12"
   IMAGE_NAME: calendar-backend
 jobs:
@@ -41,11 +42,6 @@ jobs:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
       KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
-      CALENDAR_JWT_SECRET: ${{ secrets.CALENDAR_JWT_SECRET }}
-      CALENDAR_SENDGRID_API_KEY: ${{ secrets.CALENDAR_SENDGRID_API_KEY }}
-      CALENDAR_SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY: ${{ secrets.CALENDAR_SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY }}
-      CALENDAR_GOOGLE_CLIENT_SECRET: ${{ secrets.CALENDAR_GOOGLE_CLIENT_SECRET }}
-      CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY: ${{ secrets.CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY }}
     steps:
       - uses: actions/checkout@v6
       - uses: docker/login-action@v4

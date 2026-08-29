@@ -5,9 +5,10 @@ set -euo pipefail
 : "${API_HEALTH_URL:?API_HEALTH_URL is required}"
 : "${APP_URL:?APP_URL is required}"
 : "${APP_HEALTH_URL:?APP_HEALTH_URL is required}"
+: "${ARGOCD_URL:?ARGOCD_URL is required}"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
 
-line="Application URLs | API: ${API_URL} | API Health: ${API_HEALTH_URL} | Frontend App: ${APP_URL} | Image SHA: ${GITHUB_SHA}"
+line="Application URLs | Frontend App: ${APP_URL} | API: ${API_URL} | API Health: ${API_HEALTH_URL} | Argo CD: ${ARGOCD_URL} | Image SHA: ${GITHUB_SHA}"
 echo "${line}"
 
 {
@@ -17,8 +18,9 @@ echo "${line}"
   echo ""
   echo "| Surface | URL |"
   echo "| --- | --- |"
+  echo "| Frontend App | ${APP_URL} |"
   echo "| API | ${API_URL} |"
   echo "| API Health | ${API_HEALTH_URL} |"
-  echo "| Frontend App | ${APP_URL} |"
+  echo "| Argo CD | ${ARGOCD_URL} |"
   echo "| Image SHA | \`${GITHUB_SHA}\` |"
 } >> "${GITHUB_STEP_SUMMARY}"
