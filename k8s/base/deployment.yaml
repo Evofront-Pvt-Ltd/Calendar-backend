@@ -28,7 +28,7 @@ spec:
     spec:
       automountServiceAccountToken: false
       imagePullSecrets:
-        - name: calendar-registry-pull
+        - name: dockerhub-pull
       terminationGracePeriodSeconds: 20
       securityContext:
         runAsNonRoot: true
@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: calendar-backend
-          image: REGISTRY_IMAGE_REF
+          image: calendar-backend:placeholder
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

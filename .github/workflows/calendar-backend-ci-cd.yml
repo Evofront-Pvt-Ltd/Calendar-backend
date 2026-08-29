@@ -10,13 +10,20 @@ on:
       - "requirements.txt"
       - "Dockerfile"
       - ".dockerignore"
-      - "k8s/namespace.yaml"
-      - "k8s/configmap.yaml"
-      - "k8s/mongodb.yaml"
-      - "k8s/deployment.yaml"
-      - "k8s/service.yaml"
-      - "k8s/ingress.yaml"
-      - "k8s/rbac.yaml"
+      - "ci-cd/**"
+      - "k8s/**"
+      - ".github/workflows/calendar-backend-ci-cd.yml"
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "app/**"
+      - "tests/**"
+      - "requirements.txt"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "ci-cd/**"
+      - "k8s/**"
       - ".github/workflows/calendar-backend-ci-cd.yml"
   workflow_dispatch:
 
@@ -29,13 +36,11 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.12"
-  REGISTRY_HOST: calendar-registry.212.2.249.45.nip.io
   IMAGE_NAME: calendar-backend
-  NAMESPACE: calendar-backend
   BACKEND_URL: https://calendar-api.212.2.249.45.nip.io
 
 jobs:
-  build-and-deploy:
+  ci:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -128,134 +133,70 @@ jobs:
           docker rm -f calendar-backend-validate calendar-mongo-validate
           docker network rm calendar-validate
 
-      - name: Authenticate to private registry
+  deploy:
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Docker Hub secrets
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCKERHUB_USERNAME}" ] || [ -z "${DOCKERHUB_PASSWORD}" ]; then
+            echo "::error::DOCKERHUB_USERNAME and DOCKERHUB_PASSWORD must be configured as repository secrets."
+            exit 1
+          fi
+
+      - name: Build container image
+        run: |
+          set -euo pipefail
+          docker build -t "${IMAGE_NAME}:${GITHUB_SHA}" .
+
+      - name: Authenticate to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY_HOST }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      - name: Push immutable image and record digest
-        id: image
+      - name: Push immutable image
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           set -euo pipefail
-          REMOTE_TAG="${REGISTRY_HOST}/${IMAGE_NAME}:${GITHUB_SHA}"
+          REMOTE_TAG="${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${GITHUB_SHA}"
           docker tag "${IMAGE_NAME}:${GITHUB_SHA}" "${REMOTE_TAG}"
           docker push "${REMOTE_TAG}"
-          DIGEST_REF="$(docker inspect --format='{{index .RepoDigests 0}}' "${REMOTE_TAG}")"
-          if [ -z "${DIGEST_REF}" ]; then
-            echo "::error::Could not resolve pushed image digest"
-            exit 1
-          fi
-          echo "digest_ref=${DIGEST_REF}" >> "$GITHUB_OUTPUT"
-          echo "Pushed ${DIGEST_REF}"
+          echo "Pushed ${REMOTE_TAG}"
 
-      - name: Configure kubectl
+      - name: Update staging manifest image
         env:
-          KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           set -euo pipefail
-          if [ -z "${KUBE_CONFIG_DATA}" ]; then
-            echo "::error::KUBECONFIG secret is required"
-            exit 1
-          fi
-          mkdir -p "$HOME/.kube"
-          if printf '%s' "${KUBE_CONFIG_DATA}" | grep -qE '^apiVersion:'; then
-            printf '%s' "${KUBE_CONFIG_DATA}" > "$HOME/.kube/config"
-          else
-            printf '%s' "${KUBE_CONFIG_DATA}" | base64 -d > "$HOME/.kube/config"
-            if ! grep -qE '^apiVersion:' "$HOME/.kube/config"; then
-              echo "::error::KUBECONFIG secret must be raw kubeconfig YAML or base64 kubeconfig YAML"
-              exit 1
-            fi
-          fi
-          chmod 600 "$HOME/.kube/config"
-          export KUBECONFIG="$HOME/.kube/config"
-          kubectl config current-context >/dev/null
-          kubectl cluster-info >/dev/null
+          python3 ci-cd/scripts/set_deployment_image.py \
+            "${DOCKERHUB_USERNAME}/${IMAGE_NAME}" \
+            "${GITHUB_SHA}"
 
-      - name: Deploy to Kubernetes
-        env:
-          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
-          CALENDAR_JWT_SECRET: ${{ secrets.CALENDAR_JWT_SECRET }}
-          CALENDAR_SENDGRID_API_KEY: ${{ secrets.CALENDAR_SENDGRID_API_KEY }}
-          CALENDAR_SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY: ${{ secrets.CALENDAR_SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY }}
-          CALENDAR_GOOGLE_CLIENT_SECRET: ${{ secrets.CALENDAR_GOOGLE_CLIENT_SECRET }}
-          CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY: ${{ secrets.CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY }}
+      - name: Commit and push GitOps manifest
         run: |
           set -euo pipefail
-          export KUBECONFIG="$HOME/.kube/config"
-          if [ -z "${CALENDAR_JWT_SECRET}" ]; then
-            echo "::error::CALENDAR_JWT_SECRET secret is required"
-            exit 1
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/overlays/staging/kustomization.yaml
+          if git diff --staged --quiet; then
+            echo "Manifest image tag already matches ${GITHUB_SHA}"
+            exit 0
           fi
-          DIGEST_REF="${{ steps.image.outputs.digest_ref }}"
-          kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/rbac.yaml
-          kubectl apply -f k8s/configmap.yaml
-          kubectl apply -f k8s/mongodb.yaml
-          kubectl apply -f k8s/service.yaml
-          kubectl apply -f k8s/ingress.yaml
-          kubectl -n "${NAMESPACE}" create secret docker-registry calendar-registry-pull \
-            --docker-server="${REGISTRY_HOST}" \
-            --docker-username="${REGISTRY_USERNAME}" \
-            --docker-password="${REGISTRY_PASSWORD}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-          kubectl -n "${NAMESPACE}" create secret generic calendar-backend-secrets \
-            --from-literal=JWT_SECRET="${CALENDAR_JWT_SECRET}" \
-            --from-literal=SENDGRID_API_KEY="${CALENDAR_SENDGRID_API_KEY}" \
-            --from-literal=SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY="${CALENDAR_SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY}" \
-            --from-literal=GOOGLE_CLIENT_SECRET="${CALENDAR_GOOGLE_CLIENT_SECRET}" \
-            --from-literal=GOOGLE_TOKEN_ENCRYPTION_KEY="${CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-          sed "s|image: REGISTRY_IMAGE_REF|image: ${DIGEST_REF}|" k8s/deployment.yaml | kubectl apply -f -
-
-      - name: Wait for MongoDB and backend rollout
-        run: |
-          set -euo pipefail
-          export KUBECONFIG="$HOME/.kube/config"
-          if ! kubectl -n "${NAMESPACE}" rollout status deployment/mongodb --timeout=240s; then
-            echo "::error::MongoDB rollout failed"
-            kubectl -n "${NAMESPACE}" get deploy,pods,pvc,svc -o wide
-            kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -n 80
-            kubectl -n "${NAMESPACE}" logs -l app=mongodb --tail=150
-            exit 1
-          fi
-          if ! kubectl -n "${NAMESPACE}" rollout status deployment/calendar-backend --timeout=300s; then
-            echo "::error::Backend rollout failed"
-            kubectl -n "${NAMESPACE}" get deploy,rs,pods,svc,ingress -o wide
-            kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -n 80
-            kubectl -n "${NAMESPACE}" logs -l app=calendar-backend --tail=150
-            exit 1
-          fi
-          READY="$(kubectl -n "${NAMESPACE}" get deploy calendar-backend -o jsonpath='{.status.readyReplicas}')"
-          DESIRED="$(kubectl -n "${NAMESPACE}" get deploy calendar-backend -o jsonpath='{.spec.replicas}')"
-          if [ "${READY}" != "${DESIRED}" ]; then
-            echo "::error::Ready replica count ${READY} does not match desired ${DESIRED}"
-            exit 1
-          fi
-
-      - name: Verify HTTPS health endpoint
-        run: |
-          set -euo pipefail
-          export KUBECONFIG="$HOME/.kube/config"
-          kubectl -n "${NAMESPACE}" get ingress calendar-backend
-          set +e
-          ok=0
-          body=""
-          for i in $(seq 1 36); do
-            body="$(curl -sS --max-time 15 "${BACKEND_URL}/health")"
-            if printf '%s' "${body}" | grep -q '"status":"ok"'; then
-              ok=1
-              break
-            fi
-            sleep 5
-          done
-          set -e
-          if [ "${ok}" != "1" ]; then
-            echo "::error::HTTPS GET ${BACKEND_URL}/health did not return status ok"
-            kubectl -n "${NAMESPACE}" get ingress,secret,pods -o wide
-            exit 1
-          fi
-          echo "Backend HTTPS health check passed: ${BACKEND_URL}/health"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          git commit -m "deploy: set backend image to ${SHORT_SHA}"
+          git push
