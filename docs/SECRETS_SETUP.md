@@ -37,6 +37,8 @@ After adding or changing GitHub secrets, re-run **Actions → Calendar Backend C
 
 The deploy job runs `ci-cd/scripts/ensure_backend_app_secrets.sh`, which creates/updates the Kubernetes secret **`calendar-backend-secrets`** in namespace **`calendar-backend`**.
 
+If `CALENDAR_JWT_SECRET` is not set yet, the deploy script creates a **bootstrap** JWT secret in the cluster so the backend pod can start. Add the real JWT in GitHub and re-run deploy to replace it with a stable value.
+
 ## Manual cluster secret (alternative)
 
 If you prefer not to use GitHub for app secrets, run once with pods-cluster kubeconfig:

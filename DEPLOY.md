@@ -32,7 +32,7 @@ Configure these on `Evofront-Pvt-Ltd/Calendar-backend`:
 | `DOCKERHUB_USERNAME` | Yes | Docker Hub account used to publish images |
 | `DOCKERHUB_PASSWORD` | Yes | Docker Hub password or access token |
 | `KUBECONFIG` | Yes | Civo pods-cluster kubeconfig for rollout and pull secrets |
-| `CALENDAR_JWT_SECRET` | Yes | Creates `calendar-backend-secrets` on first deploy (see docs/SECRETS_SETUP.md) |
+| `CALENDAR_JWT_SECRET` | Recommended | Creates or updates `calendar-backend-secrets` (bootstrap JWT generated if missing) |
 
 See [docs/SECRETS_SETUP.md](docs/SECRETS_SETUP.md) for a full mapping of dev-team variables to GitHub secrets vs ConfigMap.
 

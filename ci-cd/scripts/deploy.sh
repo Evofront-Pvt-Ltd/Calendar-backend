@@ -23,8 +23,20 @@ bash ci-cd/scripts/ensure_backend_app_secrets.sh
 source ci-cd/scripts/kubeconfig_env.sh
 setup_kubeconfig
 
+if kubectl -n calendar-backend get deployment mongodb >/dev/null 2>&1; then
+  kubectl -n calendar-backend rollout status deployment/mongodb --timeout=180s
+fi
+
 kubectl -n calendar-backend set image deployment/calendar-backend \
   calendar-backend="${REMOTE_TAG}"
-kubectl -n calendar-backend rollout status deployment/calendar-backend --timeout=300s
+
+if ! kubectl -n calendar-backend rollout status deployment/calendar-backend --timeout=420s; then
+  echo "::group::Backend rollout diagnostics"
+  kubectl -n calendar-backend get pods -l app=calendar-backend -o wide || true
+  kubectl -n calendar-backend describe pods -l app=calendar-backend || true
+  kubectl -n calendar-backend logs -l app=calendar-backend --tail=120 --all-containers=true || true
+  echo "::endgroup::"
+  exit 1
+fi
 
 bash ci-cd/scripts/verify_https_health.sh
