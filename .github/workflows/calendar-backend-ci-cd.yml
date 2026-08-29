@@ -13,11 +13,14 @@ concurrency:
   group: calendar-backend-${{ github.ref }}
   cancel-in-progress: false
 env:
+  API_URL: https://calendar-api.212.2.249.45.nip.io
   API_HEALTH_URL: https://calendar-api.212.2.249.45.nip.io/health
   APP_URL: https://calendar.212.2.249.45.nip.io
   APP_HEALTH_URL: https://calendar.212.2.249.45.nip.io/
   PYTHON_VERSION: "3.12"
   IMAGE_NAME: calendar-backend
+  DOCKER_BUILD_SUMMARY: "false"
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -53,11 +56,25 @@ jobs:
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
       - run: bash ci-cd/scripts/deploy.sh
   urls:
-    name: urls
     needs: deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-      - run: bash ci-cd/scripts/publish_urls.sh
+      - name: Print deployment URLs
+        run: |
+          INGRESS_IP="$(printf '%s\n' "${APP_URL#https://}" | sed -E 's/^[^.]+\.([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.nip\.io.*/\1/')"
+          echo "========================================"
+          echo "DEPLOYMENT COMPLETED"
+          echo "========================================"
+          echo ""
+          echo "Application URL:"
+          echo "${APP_URL}"
+          echo ""
+          echo "API URL:"
+          echo "${API_URL}"
+          echo ""
+          echo "Ingress IP:"
+          echo "${INGRESS_IP}"
+          echo ""
+          echo "========================================"
