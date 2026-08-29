@@ -73,7 +73,19 @@ kubectl -n calendar-backend create secret docker-registry dockerhub-pull `
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-### 3. Create application secrets
+### 3. Create MongoDB persistent volume (one-time)
+
+MongoDB storage is **not** managed by Argo CD (PVC size is immutable after bind). Create it once before the first sync:
+
+```powershell
+kubectl apply -f k8s/bootstrap/mongodb-pvc.yaml
+kubectl -n calendar-backend annotate pvc calendar-mongodb-data `
+  argocd.argoproj.io/sync-options=Delete=false --overwrite
+```
+
+The deploy workflow also runs `ci-cd/scripts/ensure_mongodb_pvc.sh` to create or annotate this PVC automatically.
+
+### 4. Create application secrets
 
 ```powershell
 kubectl -n calendar-backend create secret generic calendar-backend-secrets `
@@ -85,7 +97,7 @@ kubectl -n calendar-backend create secret generic calendar-backend-secrets `
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-### 4. Register the Argo CD application
+### 5. Register the Argo CD application
 
 ```powershell
 kubectl apply -f k8s/argocd/application.yaml
@@ -98,7 +110,7 @@ Or create the app in the Argo CD UI with:
 - Path: `k8s/overlays/staging`
 - Namespace: `calendar-backend`
 
-### 5. Push to `develop`
+### 6. Push to `develop`
 
 The workflow will:
 

@@ -17,6 +17,7 @@ docker push "${REMOTE_TAG}"
 docker manifest inspect "${REMOTE_TAG}" >/dev/null
 
 bash ci-cd/scripts/ensure_dockerhub_pull_secret.sh calendar-backend
+bash ci-cd/scripts/ensure_mongodb_pvc.sh
 bash ci-cd/scripts/ensure_backend_app_secrets.sh
 
 # shellcheck source=kubeconfig_env.sh

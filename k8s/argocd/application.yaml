@@ -31,8 +31,3 @@ spec:
       jsonPointers:
         - /spec/replicas
         - /spec/template/spec/containers/0/image
-    - group: ""
-      kind: PersistentVolumeClaim
-      name: calendar-mongodb-data
-      jsonPointers:
-        - /spec/resources/requests/storage
