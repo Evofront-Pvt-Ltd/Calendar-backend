@@ -176,7 +176,25 @@ jobs:
           REMOTE_TAG="${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${GITHUB_SHA}"
           docker tag "${IMAGE_NAME}:${GITHUB_SHA}" "${REMOTE_TAG}"
           docker push "${REMOTE_TAG}"
+          docker manifest inspect "${REMOTE_TAG}" >/dev/null
           echo "Pushed ${REMOTE_TAG}"
+
+      - name: Ensure Docker Hub pull secret in cluster
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+        run: bash ci-cd/scripts/ensure_dockerhub_pull_secret.sh calendar-backend
+
+      - name: Ensure backend application secrets
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
+          CALENDAR_JWT_SECRET: ${{ secrets.CALENDAR_JWT_SECRET }}
+          CALENDAR_SENDGRID_API_KEY: ${{ secrets.CALENDAR_SENDGRID_API_KEY }}
+          CALENDAR_SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY: ${{ secrets.CALENDAR_SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY }}
+          CALENDAR_GOOGLE_CLIENT_SECRET: ${{ secrets.CALENDAR_GOOGLE_CLIENT_SECRET }}
+          CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY: ${{ secrets.CALENDAR_GOOGLE_TOKEN_ENCRYPTION_KEY }}
+        run: bash ci-cd/scripts/ensure_backend_app_secrets.sh
 
       - name: Update staging manifest image
         env:
