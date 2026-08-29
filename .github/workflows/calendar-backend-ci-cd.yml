@@ -13,7 +13,6 @@ concurrency:
   group: calendar-backend-${{ github.ref }}
   cancel-in-progress: false
 env:
-  API_URL: https://calendar-api.212.2.249.45.nip.io
   API_HEALTH_URL: https://calendar-api.212.2.249.45.nip.io/health
   APP_URL: https://calendar.212.2.249.45.nip.io
   APP_HEALTH_URL: https://calendar.212.2.249.45.nip.io/
@@ -53,12 +52,3 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
       - run: bash ci-cd/scripts/deploy.sh
-  application-urls:
-    name: application-urls
-    needs: deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-      - run: bash ci-cd/scripts/publish_application_urls.sh

@@ -41,3 +41,5 @@ if ! kubectl -n calendar-backend rollout status deployment/calendar-backend --ti
 fi
 
 bash ci-cd/scripts/verify_https_health.sh
+
+echo "Deploy complete — Frontend: ${APP_URL} | API health: ${API_HEALTH_URL}"
