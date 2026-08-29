@@ -8,13 +8,8 @@ set -euo pipefail
 : "${ARGOCD_URL:?ARGOCD_URL is required}"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
 
-line="Application URLs | Frontend App: ${APP_URL} | API: ${API_URL} | API Health: ${API_HEALTH_URL} | Argo CD: ${ARGOCD_URL} | Image SHA: ${GITHUB_SHA}"
-echo "${line}"
-
 {
   echo "## Application URLs"
-  echo ""
-  echo "${line}"
   echo ""
   echo "| Surface | URL |"
   echo "| --- | --- |"
