@@ -29,8 +29,8 @@ k8s/
   base/                 # Namespace, MongoDB, backend deployment, service, ingress
   overlays/staging/     # Image tag updated by CI
   argocd/               # Argo CD Application manifest
+  bootstrap/            # Pre-Argo namespace bootstrap (backend + frontend)
   cluster/              # Optional ClusterIssuer template
-  registry/             # Legacy in-cluster registry (not used by current pipeline)
 ```
 
 ## Hostnames

@@ -103,7 +103,7 @@ The workflow will:
 
 1. Run tests and container validation
 2. Push `DOCKERHUB_USERNAME/calendar-backend:<full-git-sha>`
-3. Commit `deploy: set backend image to <short-sha>`
+3. Commit `k8s: pin calendar-backend image to <full-git-sha>`
 4. Let Argo CD roll out the new image
 
 ## Rollback
@@ -120,10 +120,6 @@ Emergency cluster rollback:
 ```powershell
 kubectl -n calendar-backend rollout undo deployment/calendar-backend
 ```
-
-## Legacy in-cluster registry
-
-`k8s/registry/` is retained only for historical reference. New deployments use Docker Hub, matching the Surveys GitOps pattern.
 
 ## Branch policy
 

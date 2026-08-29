@@ -15,7 +15,7 @@ def main() -> int:
         "repository",
         help="Image repository without tag, for example evofront/calendar-backend",
     )
-    parser.add_argument("tag", help="Immutable image tag, usually the Git commit SHA")
+    parser.add_argument("tag", help="Git commit SHA image tag")
     parser.add_argument(
         "--image-name",
         default=None,
