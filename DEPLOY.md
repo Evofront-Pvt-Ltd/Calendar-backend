@@ -35,6 +35,8 @@ Configure these on `Evofront-Pvt-Ltd/Calendar-backend`:
 
 Application secrets (`JWT_SECRET`, SendGrid, Google) are created once in the cluster (step 3 below), not stored in GitHub Actions.
 
+See [docs/SECRETS_SETUP.md](docs/SECRETS_SETUP.md) for a full mapping of dev-team variables to GitHub secrets vs ConfigMap.
+
 ## One-time cluster bootstrap
 
 Complete these steps on the shared Civo `pods-cluster` **before** creating Argo CD applications.
