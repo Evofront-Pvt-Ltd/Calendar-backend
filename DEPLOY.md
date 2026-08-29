@@ -32,8 +32,7 @@ Configure these on `Evofront-Pvt-Ltd/Calendar-backend`:
 | `DOCKERHUB_USERNAME` | Yes | Docker Hub account used to publish images |
 | `DOCKERHUB_PASSWORD` | Yes | Docker Hub password or access token |
 | `KUBECONFIG` | Yes | Civo pods-cluster kubeconfig for rollout and pull secrets |
-
-Application secrets (`JWT_SECRET`, SendGrid, Google) are created once in the cluster (step 3 below), not stored in GitHub Actions.
+| `CALENDAR_JWT_SECRET` | Yes | Creates `calendar-backend-secrets` on first deploy (see docs/SECRETS_SETUP.md) |
 
 See [docs/SECRETS_SETUP.md](docs/SECRETS_SETUP.md) for a full mapping of dev-team variables to GitHub secrets vs ConfigMap.
 
