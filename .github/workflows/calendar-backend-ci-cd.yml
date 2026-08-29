@@ -15,6 +15,7 @@ concurrency:
 env:
   PYTHON_VERSION: "3.12"
   IMAGE_NAME: calendar-backend
+  BACKEND_URL: https://calendar-api.212.2.249.45.nip.io
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -53,3 +54,24 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
       - run: bash ci-cd/scripts/deploy.sh
+      - name: Print application URLs
+        env:
+          CALENDAR_JWT_SECRET: ${{ secrets.CALENDAR_JWT_SECRET }}
+        run: |
+          set -euo pipefail
+          echo ""
+          echo "=============================================="
+          echo "Calendar Staging Application URLs"
+          echo "=============================================="
+          echo "Frontend:  https://calendar.212.2.249.45.nip.io"
+          echo "Backend:   ${BACKEND_URL}"
+          echo "Health:    ${BACKEND_URL}/health"
+          echo "Argo CD:   https://argocd.212.2.249.45.nip.io"
+          echo "Image:     ${GITHUB_SHA}"
+          echo "=============================================="
+          echo "::notice title=Calendar URLs::Frontend https://calendar.212.2.249.45.nip.io | API ${BACKEND_URL} | Health ${BACKEND_URL}/health"
+          if [ -z "${CALENDAR_JWT_SECRET}" ]; then
+            echo "::warning::CALENDAR_JWT_SECRET is not configured. Add it in GitHub → Settings → Secrets → Actions, then re-run deploy."
+          else
+            echo "CALENDAR_JWT_SECRET is configured (value not printed)."
+          fi

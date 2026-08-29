@@ -7,7 +7,8 @@ if [ -z "${KUBE_CONFIG_DATA:-}" ]; then
 fi
 
 if [ -z "${CALENDAR_JWT_SECRET:-}" ]; then
-  echo "CALENDAR_JWT_SECRET is not set; skipping backend application secret bootstrap"
+  echo "::warning::CALENDAR_JWT_SECRET is not set in GitHub repository secrets. Add it under Settings → Secrets → Actions, then re-run deploy."
+  echo "Skipping backend application secret bootstrap"
   exit 0
 fi
 
