@@ -11,14 +11,9 @@ if [ -z "${CALENDAR_JWT_SECRET:-}" ]; then
   exit 0
 fi
 
-mkdir -p "$HOME/.kube"
-if printf '%s' "${KUBE_CONFIG_DATA}" | grep -qE '^apiVersion:'; then
-  printf '%s' "${KUBE_CONFIG_DATA}" > "$HOME/.kube/config"
-else
-  printf '%s' "${KUBE_CONFIG_DATA}" | base64 -d > "$HOME/.kube/config"
-fi
-chmod 600 "$HOME/.kube/config"
-export KUBECONFIG="$HOME/.kube/config"
+# shellcheck source=kubeconfig_env.sh
+source "$(dirname "$0")/kubeconfig_env.sh"
+setup_kubeconfig
 
 kubectl -n calendar-backend create secret generic calendar-backend-secrets \
   --from-literal=JWT_SECRET="${CALENDAR_JWT_SECRET}" \

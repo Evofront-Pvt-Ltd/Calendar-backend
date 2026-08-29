@@ -103,8 +103,8 @@ The workflow will:
 
 1. Run tests and container validation
 2. Push `DOCKERHUB_USERNAME/calendar-backend:<full-git-sha>`
-3. Commit `k8s: pin calendar-backend image to <full-git-sha>`
-4. Let Argo CD roll out the new image
+3. Roll out the SHA-tagged image via `kubectl` (no Git manifest commits)
+4. Verify HTTPS health for API (`/health`) and frontend app URL
 
 ## Rollback
 

@@ -16,21 +16,9 @@ if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_PASSWORD:-}" ]; then
   exit 1
 fi
 
-mkdir -p "$HOME/.kube"
-if printf '%s' "${KUBE_CONFIG_DATA}" | grep -qE '^apiVersion:'; then
-  printf '%s' "${KUBE_CONFIG_DATA}" > "$HOME/.kube/config"
-else
-  printf '%s' "${KUBE_CONFIG_DATA}" | base64 -d > "$HOME/.kube/config"
-  if ! grep -qE '^apiVersion:' "$HOME/.kube/config"; then
-    echo "::error::KUBECONFIG secret must be raw kubeconfig YAML or base64 kubeconfig YAML" >&2
-    exit 1
-  fi
-fi
-chmod 600 "$HOME/.kube/config"
-export KUBECONFIG="$HOME/.kube/config"
-
-kubectl config current-context >/dev/null
-kubectl cluster-info >/dev/null
+# shellcheck source=kubeconfig_env.sh
+source "$(dirname "$0")/kubeconfig_env.sh"
+setup_kubeconfig
 
 for ns in "$@"; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -

@@ -30,3 +30,4 @@ spec:
       name: calendar-backend
       jsonPointers:
         - /spec/replicas
+        - /spec/template/spec/containers/0/image

@@ -13,6 +13,10 @@ concurrency:
   group: calendar-backend-${{ github.ref }}
   cancel-in-progress: false
 env:
+  API_URL: https://calendar-api.212.2.249.45.nip.io
+  API_HEALTH_URL: https://calendar-api.212.2.249.45.nip.io/health
+  APP_URL: https://calendar.212.2.249.45.nip.io
+  APP_HEALTH_URL: https://calendar.212.2.249.45.nip.io/
   PYTHON_VERSION: "3.12"
   IMAGE_NAME: calendar-backend
 jobs:
@@ -33,13 +37,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      contents: write
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
-      GITHUB_ACTOR: ${{ github.actor }}
-      GITHUB_ACTOR_ID: ${{ github.actor_id }}
       KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
       CALENDAR_JWT_SECRET: ${{ secrets.CALENDAR_JWT_SECRET }}
       CALENDAR_SENDGRID_API_KEY: ${{ secrets.CALENDAR_SENDGRID_API_KEY }}
@@ -53,3 +53,4 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
       - run: bash ci-cd/scripts/deploy.sh
+      - run: bash ci-cd/scripts/publish_application_urls.sh

@@ -13,7 +13,7 @@ See [DEPLOY.md](../DEPLOY.md) for bootstrap, secrets, Argo CD registration, and 
 | Job | Trigger | Actions |
 | --- | --- | --- |
 | `ci` | PR and push to `develop` | unittest, docker build, container smoke test |
-| `deploy` | push to `develop` only | push image to Docker Hub, commit manifest image tag |
+| `deploy` | push to `develop` only | push SHA image, kubectl rollout, HTTPS health checks |
 
 ## GitHub secrets
 

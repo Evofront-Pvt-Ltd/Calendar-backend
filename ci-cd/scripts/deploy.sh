@@ -4,8 +4,9 @@ set -euo pipefail
 : "${DOCKERHUB_USERNAME:?DOCKERHUB_USERNAME is required}"
 : "${DOCKERHUB_PASSWORD:?DOCKERHUB_PASSWORD is required}"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
-: "${GITHUB_ACTOR:?GITHUB_ACTOR is required}"
-: "${GITHUB_ACTOR_ID:?GITHUB_ACTOR_ID is required}"
+: "${KUBE_CONFIG_DATA:?KUBECONFIG secret is required}"
+: "${API_HEALTH_URL:?API_HEALTH_URL is required}"
+: "${APP_HEALTH_URL:?APP_HEALTH_URL is required}"
 : "${IMAGE_NAME:=calendar-backend}"
 
 REMOTE_TAG="${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${GITHUB_SHA}"
@@ -18,11 +19,12 @@ docker manifest inspect "${REMOTE_TAG}" >/dev/null
 bash ci-cd/scripts/ensure_dockerhub_pull_secret.sh calendar-backend
 bash ci-cd/scripts/ensure_backend_app_secrets.sh
 
-python3 ci-cd/scripts/set_deployment_image.py "${DOCKERHUB_USERNAME}/${IMAGE_NAME}" "${GITHUB_SHA}"
+# shellcheck source=kubeconfig_env.sh
+source ci-cd/scripts/kubeconfig_env.sh
+setup_kubeconfig
 
-git config user.name "${GITHUB_ACTOR}"
-git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
-git add k8s/overlays/staging/kustomization.yaml
-git diff --staged --quiet && exit 0
-git commit -m "k8s: pin calendar-backend image to ${GITHUB_SHA}"
-git push
+kubectl -n calendar-backend set image deployment/calendar-backend \
+  calendar-backend="${REMOTE_TAG}"
+kubectl -n calendar-backend rollout status deployment/calendar-backend --timeout=300s
+
+bash ci-cd/scripts/verify_https_health.sh
