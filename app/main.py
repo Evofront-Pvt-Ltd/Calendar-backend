@@ -50,6 +50,17 @@ app.include_router(widget.router)
 app.include_router(sendgrid_webhooks.router)
 
 
+@app.get("/")
+async def root() -> dict:
+    return {
+        "service": settings.app_name,
+        "environment": settings.environment,
+        "status": "ok",
+        "health": "/health",
+        "docs": "/docs",
+    }
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": settings.app_name, "environment": settings.environment}
