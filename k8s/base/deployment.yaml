@@ -9,13 +9,13 @@ metadata:
     app.kubernetes.io/name: calendar-backend
 spec:
   replicas: 1
-  revisionHistoryLimit: 3
+  revisionHistoryLimit: 2
   progressDeadlineSeconds: 300
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
+      maxUnavailable: 1
+      maxSurge: 0
   selector:
     matchLabels:
       app: calendar-backend
@@ -81,8 +81,8 @@ spec:
             failureThreshold: 18
           resources:
             requests:
-              cpu: 50m
-              memory: 128Mi
+              cpu: 25m
+              memory: 96Mi
             limits:
-              cpu: 250m
-              memory: 384Mi
+              cpu: 150m
+              memory: 256Mi
