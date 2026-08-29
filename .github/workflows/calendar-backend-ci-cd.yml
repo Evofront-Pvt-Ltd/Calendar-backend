@@ -17,7 +17,6 @@ env:
   API_HEALTH_URL: https://calendar-api.212.2.249.45.nip.io/health
   APP_URL: https://calendar.212.2.249.45.nip.io
   APP_HEALTH_URL: https://calendar.212.2.249.45.nip.io/
-  ARGOCD_URL: https://argocd.212.2.249.45.nip.io
   PYTHON_VERSION: "3.12"
   IMAGE_NAME: calendar-backend
 jobs:
