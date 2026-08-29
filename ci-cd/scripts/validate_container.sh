@@ -49,3 +49,9 @@ if [ "${ready}" != "1" ]; then
   docker logs calendar-backend-validate
   exit 1
 fi
+
+if ! curl -fsS --max-time 5 http://127.0.0.1:8000/ | grep -q '"status":"ok"'; then
+  echo "::error::Backend container did not serve GET /"
+  docker logs calendar-backend-validate
+  exit 1
+fi

@@ -28,8 +28,10 @@ if kubectl -n calendar-backend get deployment mongodb >/dev/null 2>&1; then
   kubectl -n calendar-backend rollout status deployment/mongodb --timeout=180s
 fi
 
-kubectl -n calendar-backend set image deployment/calendar-backend \
-  calendar-backend="${REMOTE_TAG}"
+KUSTOMIZE_FILE="k8s/overlays/staging/kustomization.yaml"
+sed -i "s|newName: .*|newName: ${DOCKERHUB_USERNAME}/${IMAGE_NAME}|" "${KUSTOMIZE_FILE}"
+sed -i "s/newTag: .*/newTag: ${GITHUB_SHA}/" "${KUSTOMIZE_FILE}"
+kubectl apply -k k8s/overlays/staging
 
 if ! kubectl -n calendar-backend rollout status deployment/calendar-backend --timeout=420s; then
   echo "::group::Backend rollout diagnostics"
@@ -41,5 +43,3 @@ if ! kubectl -n calendar-backend rollout status deployment/calendar-backend --ti
 fi
 
 bash ci-cd/scripts/verify_https_health.sh
-
-echo "Deploy complete — Frontend: ${APP_URL} | API health: ${API_HEALTH_URL}"

@@ -52,3 +52,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
       - run: bash ci-cd/scripts/deploy.sh
+  urls:
+    name: urls
+    needs: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - run: bash ci-cd/scripts/publish_urls.sh

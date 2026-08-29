@@ -3,8 +3,6 @@ set -euo pipefail
 
 : "${API_HEALTH_URL:?API_HEALTH_URL is required}"
 : "${APP_HEALTH_URL:?APP_HEALTH_URL is required}"
-
-api_ok=0
 for _ in $(seq 1 30); do
   if curl -fsS --max-time 15 "${API_HEALTH_URL}" | grep -q '"status":"ok"'; then
     api_ok=1
