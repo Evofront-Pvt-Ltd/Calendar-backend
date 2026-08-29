@@ -36,9 +36,9 @@ def main() -> int:
 
     text = path.read_text(encoding="utf-8")
     pattern = re.compile(
-        rf"(- name: {re.escape(image_name)}\n"
-        rf"  newName: ).*(\n"
-        rf"  newTag: ).*",
+        rf"(- name: {re.escape(image_name)}\s*\n"
+        rf"\s+newName: ).*(\n"
+        rf"\s+newTag: ).*",
         re.MULTILINE,
     )
     if not pattern.search(text):
