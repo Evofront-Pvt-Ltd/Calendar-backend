@@ -7,4 +7,4 @@ resources:
 images:
   - name: calendar-backend
     newName: mohankatari/calendar-backend
-    newTag: 47979a92b8bbdb48097fceb1751ba1b88c1ce104
+    newTag: f26f2aa49e26d793e4093f743879969ec923c9c3
