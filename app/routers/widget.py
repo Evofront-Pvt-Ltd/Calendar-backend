@@ -106,5 +106,5 @@ async def widget_booking(
     if product_booking_mode(product) == "approval":
         booking = await create_pending_client_booking(product, payload, source_domain=origin, widget_id=public_widget_id)
     else:
-        booking = await create_client_booking(product, payload)
+        booking = await create_client_booking(product, payload, source_domain=origin, widget_id=public_widget_id)
     return ClientBookingOut(**await client_booking_to_out(booking))

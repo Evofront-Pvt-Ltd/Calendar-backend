@@ -12,3 +12,10 @@ htmlcov/
 *.db
 *.sqlite*
 *.code-workspace
+
+# Cluster credentials must never be committed
+kubeconfig
+kubeconfig*
+*kubeconfig*
+*.kubeconfig
+!ci-cd/scripts/kubeconfig_env.sh

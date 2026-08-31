@@ -211,6 +211,9 @@ class ClientBookingOut(BaseModel):
     assignment_reason: str = ""
     public_booking_reference: str
     confirmation_link: str = ""
+    source_domain: str = ""
+    widget_id: str = ""
+    booking_mode: str = ""
     google_meet_url: str = ""
     google_event_url: str = ""
     google_sync_status: str = "DISABLED"
@@ -391,8 +394,31 @@ class LoginRequest(BaseModel):
 
 class AuthResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
+    expires_in: int
     user: UserPublic
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=1, max_length=512)
+
+
+class RefreshResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = Field(default=None, max_length=512)
+    all_sessions: bool = False
+
+
+class LogoutResponse(BaseModel):
+    success: bool = True
+    message: str = "Signed out"
 
 
 class ProductCreate(BaseModel):
@@ -454,6 +480,72 @@ class ProductOut(BaseModel):
     updated_at: datetime
 
 
+class ProductControllerCreate(BaseModel):
+    email: EmailStr
+
+
+class ProductControllerOut(BaseModel):
+    id: str
+    product_id: str
+    email: EmailStr
+    status: Literal["pending", "verified", "expired", "revoked"]
+    added_by: str = ""
+    verified_at: datetime | None = None
+    verification_expires_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ControllerVerifyOut(BaseModel):
+    status: str
+    email: str
+    product_id: str
+    message: str
+
+
+class MemberVerifyOut(BaseModel):
+    status: str
+    email: str
+    product_name: str = ""
+    has_login: bool = False
+    message: str
+
+
+class BookingClaimAlertOut(BaseModel):
+    id: str
+    product_id: str
+    booking_id: str
+    status: str
+    audience: str = ""
+    claim_token: str = ""
+    created_at: datetime | None = None
+    client_name: str = ""
+    client_email: str = ""
+    client_company: str = ""
+    issue_title: str = ""
+    issue_category: str = ""
+    priority: str = ""
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    timezone: str = ""
+    issue_description: str = ""
+
+
+class PublicBookingClaimOut(BaseModel):
+    token: str
+    status: str
+    booking_status: str
+    product_name: str
+    client_name: str
+    issue_title: str
+    issue_category: str
+    priority: str
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    timezone: str = ""
+    can_accept: bool = False
+
+
 class BookingAssignmentUpdate(BaseModel):
     member_id: str = Field(min_length=12, max_length=64)
     reason: str = Field(default="", max_length=300)
@@ -484,6 +576,10 @@ class ProductMemberOut(BaseModel):
     role: str
     membership_status: str
     invitation_status: str = "pending_email_integration"
+    verification_status: Literal["pending", "verified", "expired"] = "pending"
+    verified_at: datetime | None = None
+    verification_expires_at: datetime | None = None
+    has_login: bool = False
     added_by: str
     added_by_name: str = ""
     date_added: datetime

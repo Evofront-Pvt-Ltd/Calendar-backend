@@ -14,6 +14,7 @@ from app.core.database import get_database
 from app.core.utils import as_utc, now_utc, object_id, public_doc
 from app.services.email import BookingConfirmationMessage, BookingNotificationMessage, email_service
 from app.services.google_calendar import google_calendar_service
+from app.services.product_members import is_verified, verification_reason, verification_state
 from app.services.scheduling import normalize_timezone, parse_hhmm, timezone_or_400
 
 SUPPORT_ROLES = {"product_owner", "calendar_controller", "member"}
@@ -183,7 +184,7 @@ async def eligible_product_members(product_id: str) -> list[dict[str, Any]]:
             user = None
         if user is None:
             continue
-        if user.get("status", "active") != "active":
+        if not is_verified(membership, user):
             continue
         eligible.append({"membership": membership, "user": user})
     return eligible
@@ -204,15 +205,17 @@ async def product_member_summaries(product_id: str) -> list[dict[str, Any]]:
             pass
         role = membership.get("role", "member")
         membership_status = membership.get("status", "inactive")
-        user_status = user.get("status", "unknown") if user else "missing"
-        included = role in SUPPORT_ROLES and membership_status == "active" and user_status == "active"
+        verify_state = verification_state(membership, user) if user else "pending"
+        included = role in SUPPORT_ROLES and membership_status == "active" and verify_state == "verified"
         reason = ""
         if role == "viewer":
             reason = "Viewer role is not included in support rotation"
         elif membership_status != "active":
             reason = "Membership is inactive"
-        elif user_status != "active":
-            reason = "User is not active"
+        elif user is None:
+            reason = "User record is missing"
+        elif verify_state != "verified":
+            reason = verification_reason(verify_state)
         summaries.append(
             {
                 "member_id": membership["user_id"],
@@ -501,7 +504,7 @@ async def build_product_slots(
     bookings = [
         item
         async for item in get_database().client_bookings.find(
-            {"product_id": product_id, "status": "scheduled"},
+            {"product_id": product_id, "status": {"$in": ["scheduled", "pending_approval"]}},
             {"assigned_member_id": 1, "start_time_utc": 1, "end_time_utc": 1},
         )
     ]
@@ -589,6 +592,10 @@ def active_slot_key(product_id: str, member_id: str, start_time_utc: datetime) -
 
 def workspace_controller_email(product: dict[str, Any]) -> str:
     return str(product.get("controller_email") or settings.booking_notification_email or "").strip().lower()
+
+
+def booking_source_domain(booking: dict[str, Any]) -> str:
+    return str(booking.get("source_domain") or "").strip()
 
 
 async def update_notification_delivery(notification: dict[str, Any], delivery: Any) -> dict[str, Any]:
@@ -692,6 +699,7 @@ async def create_booking_notifications(product: dict[str, Any], booking: dict[st
             product_reference_number=booking.get("product_reference_number", ""),
             meeting_url=booking.get("google_meet_url", ""),
             booking_status=booking.get("status", "scheduled"),
+            source_domain=booking_source_domain(booking),
             reply_to_email=booking["client_email"] if settings.booking_reply_to_enabled else "",
             notification_id=str(email_notification["_id"]),
             idempotency_key=email_idempotency_key,
@@ -748,8 +756,9 @@ async def create_booking_notifications(product: dict[str, Any], booking: dict[st
     await update_notification_delivery(client_notification, client_delivery)
     notifications.append(client_notification)
 
-    controller_email = workspace_controller_email(product)
-    if controller_email:
+    from app.services.product_controllers import verified_controller_emails
+
+    for controller_email in await verified_controller_emails(product):
         admin_notification = {
             "organization_id": product["organization_id"],
             "product_id": str(product["_id"]),
@@ -757,7 +766,7 @@ async def create_booking_notifications(product: dict[str, Any], booking: dict[st
             "recipient_user_id": "",
             "recipient_email": controller_email,
             "channel": "email",
-                "type": "admin_team_connection_booking_created",
+            "type": "admin_team_connection_booking_created",
             "status": "PENDING_EMAIL_INTEGRATION",
             "provider": settings.email_provider if settings.email_enabled else "disabled",
             "provider_message_id": "",
@@ -767,7 +776,7 @@ async def create_booking_notifications(product: dict[str, Any], booking: dict[st
             "delivered_at": None,
             "failed_at": None,
             "failure_reason": "",
-            "idempotency_key": f"client_booking:{booking['_id']}:email:admin",
+            "idempotency_key": f"client_booking:{booking['_id']}:email:admin:{controller_email}",
             "created_at": timestamp,
             "updated_at": timestamp,
         }
@@ -775,7 +784,7 @@ async def create_booking_notifications(product: dict[str, Any], booking: dict[st
             result = await db.booking_notifications.insert_one(admin_notification)
             admin_notification["_id"] = result.inserted_id
         except DuplicateKeyError:
-            return notifications
+            continue
 
         admin_delivery = await email_service.send_booking_notification(
             BookingNotificationMessage(
@@ -797,6 +806,7 @@ async def create_booking_notifications(product: dict[str, Any], booking: dict[st
                 product_reference_number=booking.get("product_reference_number", ""),
                 meeting_url=booking.get("google_meet_url", ""),
                 booking_status=booking.get("status", "scheduled"),
+                source_domain=booking_source_domain(booking),
                 reply_to_email=booking["client_email"] if settings.booking_reply_to_enabled else "",
                 notification_id=str(admin_notification["_id"]),
                 idempotency_key=admin_notification["idempotency_key"],
@@ -812,62 +822,12 @@ async def create_controller_request_notification(
     booking: dict[str, Any],
     member: dict[str, Any],
 ) -> dict[str, Any] | None:
-    controller_email = workspace_controller_email(product)
-    if not controller_email:
-        return None
-    timestamp = now_utc()
-    notification = {
-        "organization_id": product["organization_id"],
-        "product_id": str(product["_id"]),
-        "booking_id": str(booking["_id"]),
-        "recipient_user_id": "",
-        "recipient_email": controller_email,
-        "channel": "email",
-        "type": "controller_booking_request_created",
-        "status": "PENDING_EMAIL_INTEGRATION",
-        "provider": settings.email_provider if settings.email_enabled else "disabled",
-        "provider_message_id": "",
-        "attempts": 0,
-        "last_attempt_at": None,
-        "sent_at": None,
-        "delivered_at": None,
-        "failed_at": None,
-        "failure_reason": "",
-        "idempotency_key": f"client_booking:{booking['_id']}:email:controller_request",
-        "created_at": timestamp,
-        "updated_at": timestamp,
-    }
-    try:
-        result = await get_database().booking_notifications.insert_one(notification)
-        notification["_id"] = result.inserted_id
-    except DuplicateKeyError:
-        return None
-    delivery = await email_service.send_booking_notification(
-        BookingNotificationMessage(
-            recipient_email=controller_email,
-            recipient_name=product.get("name", settings.booking_from_name or "Workspace controller"),
-            product_name=product["name"],
-            client_name=booking["client_name"],
-            client_company=booking.get("client_company", ""),
-            issue_category=booking["issue_category"],
-            issue_title=booking["issue_title"],
-            issue_description=booking.get("issue_description", ""),
-            priority=booking["priority"],
-            start_time=booking["start_time_utc"],
-            end_time=booking["end_time_utc"],
-            timezone=booking["product_timezone"],
-            duration_minutes=int((booking["end_time_utc"] - booking["start_time_utc"]).total_seconds() // 60),
-            booking_link=confirmation_link(booking["secure_token_reference"]),
-            client_phone=booking.get("client_phone", ""),
-            product_reference_number=booking.get("product_reference_number", ""),
-            meeting_url="",
-            booking_status=booking.get("status", "pending_approval"),
-            reply_to_email=booking["client_email"] if settings.booking_reply_to_enabled else "",
-            notification_id=str(notification["_id"]),
-            idempotency_key=notification["idempotency_key"],
-        )
-    )
-    return await update_notification_delivery(notification, delivery)
+    from app.services.booking_claims import create_controller_mailbox_notifications, create_shift_claim_alerts
+
+    _ = member
+    await create_controller_mailbox_notifications(product, booking)
+    await create_shift_claim_alerts(product, booking)
+    return None
 
 
 async def create_client_request_received_notification(
@@ -915,6 +875,7 @@ async def create_client_request_received_notification(
             meeting_url="",
             confirmation_link=confirmation_link(booking["secure_token_reference"]),
             notes="Your request was received. The workspace controller will review it and send final meeting details after approval.",
+            pending_approval=True,
             notification_id=str(notification["_id"]),
             idempotency_key=notification["idempotency_key"],
         )
@@ -930,7 +891,12 @@ async def active_support_member_for_product(product_id: str, member_id: str) -> 
     membership = await get_database().product_memberships.find_one(
         {"product_id": product_id, "user_id": member_id, "status": "active"}
     )
-    if member is None or membership is None or membership.get("role") not in SUPPORT_ROLES or member.get("status") != "active":
+    if (
+        member is None
+        or membership is None
+        or membership.get("role") not in SUPPORT_ROLES
+        or not is_verified(membership, member)
+    ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="That team member is no longer available")
     return member, membership
 
@@ -1022,7 +988,12 @@ async def create_pending_client_booking(
     return booking
 
 
-async def create_client_booking(product: dict[str, Any], payload: Any) -> dict[str, Any]:
+async def create_client_booking(
+    product: dict[str, Any],
+    payload: Any,
+    source_domain: str = "",
+    widget_id: str = "",
+) -> dict[str, Any]:
     product_id, member, _membership, policy, requested_start, requested_end = await booking_from_slot_payload(product, payload)
     member_id = str(member["_id"])
     if settings.google_calendar_enabled:
@@ -1033,6 +1004,8 @@ async def create_client_booking(product: dict[str, Any], payload: Any) -> dict[s
     booking = {
         "organization_id": product["organization_id"],
         "product_id": product_id,
+        "source_domain": source_domain,
+        "widget_id": widget_id,
         "assigned_member_id": member_id,
         "client_name": payload.client_name.strip(),
         "client_email": str(payload.client_email).lower(),
@@ -1049,6 +1022,7 @@ async def create_client_booking(product: dict[str, Any], payload: Any) -> dict[s
         "product_timezone": policy["timezone"],
         "status": "scheduled",
         "active_slot_key": active_slot_key(product_id, member_id, requested_start),
+        "booking_mode": "instant",
         "assignment_strategy": "direct_coverage",
         "assignment_reason": "Slot belongs to the assigned product-team member coverage window",
         "public_booking_reference": secrets.token_urlsafe(10),
@@ -1194,17 +1168,23 @@ async def approve_client_booking(
         except HTTPException as exc:
             if exc.status_code != status.HTTP_409_CONFLICT:
                 raise
-            approver_id = str(user["_id"])
-            if approver_id == member_id:
-                raise
-            try:
-                await google_calendar_service.ensure_member_connected_for_booking(approver_id)
-            except HTTPException:
+            # A member who accepted from email may have no calendar (or no login at
+            # all), so fall back to the approver and then the workspace owner.
+            organizer_user_id = ""
+            for candidate_id in (str(user["_id"]), str(product.get("created_by") or "")):
+                if not candidate_id or candidate_id == member_id:
+                    continue
+                try:
+                    await google_calendar_service.ensure_member_connected_for_booking(candidate_id)
+                except HTTPException:
+                    continue
+                organizer_user_id = candidate_id
+                break
+            if not organizer_user_id:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Google Calendar is not connected for the assigned member or approving controller",
+                    detail="Google Calendar is not connected for the assigned member, approver, or workspace owner",
                 ) from None
-            organizer_user_id = approver_id
             if member.get("email"):
                 attendee_emails.append(member["email"])
         try:
@@ -1239,7 +1219,9 @@ async def approve_client_booking(
             "google_attendees": google_result.attendees,
         }
         if organizer_user_id != member_id:
-            google_updates["calendar_organizer_reason"] = "Assigned member calendar not connected; approving controller calendar used"
+            google_updates["calendar_organizer_reason"] = (
+                "Assigned member calendar not connected; approver or workspace owner calendar used"
+            )
         booking.update(google_updates)
 
     timestamp = now_utc()
@@ -1329,6 +1311,9 @@ async def client_booking_to_out(booking: dict[str, Any]) -> dict[str, Any]:
         **public_doc(booking),
         "assigned_member_name": member.get("name", "") if member else "",
         "confirmation_link": confirmation_link(booking["secure_token_reference"]),
+        "source_domain": str(booking.get("source_domain") or ""),
+        "widget_id": str(booking.get("widget_id") or ""),
+        "booking_mode": str(booking.get("booking_mode") or ""),
     }
 
 
@@ -1390,12 +1375,26 @@ async def team_availability_context(product: dict[str, Any], user: dict[str, Any
     policy = await ensure_policy(product, user)
     coverage = [await decorate_availability(item) for item in await coverage_records_for_date(product, user, target_date)]
     slots = await build_product_slots(product, user, target_date, include_internal=True)
-    bookings = [
-        await client_booking_to_out(item)
+    day_start = datetime.combine(target_date, time.min, tzinfo=UTC)
+    raw_bookings = [
+        item
         async for item in get_database().client_bookings.find(
-            {"product_id": str(product["_id"]), "start_time_utc": {"$gte": datetime.combine(target_date, time.min, tzinfo=UTC)}}
-        ).sort("start_time_utc", 1)
+            {
+                "product_id": str(product["_id"]),
+                "$or": [
+                    {"status": "pending_approval"},
+                    {"start_time_utc": {"$gte": day_start}},
+                ],
+            }
+        )
     ]
+    raw_bookings.sort(
+        key=lambda item: (
+            0 if item.get("status") == "pending_approval" else 1,
+            as_utc(item["start_time_utc"]),
+        )
+    )
+    bookings = [await client_booking_to_out(item) for item in raw_bookings]
     booking_ids = [item["id"] for item in bookings]
     notifications = [
         public_doc(item)

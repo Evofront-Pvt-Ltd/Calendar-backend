@@ -30,6 +30,9 @@ async def dashboard_stats(
     pending_invitations = await db.meeting_invitations.count_documents(
         {"product_id": product_id, "email_delivery_status": "PENDING_EMAIL_INTEGRATION"}
     )
+    pending_client_bookings = await db.client_bookings.count_documents(
+        {"product_id": product_id, "status": "pending_approval"}
+    )
     return {
         "event_types": total_event_types,
         "active_event_types": active_event_types,
@@ -38,4 +41,5 @@ async def dashboard_stats(
         "team_members": team_members,
         "scheduled_team_meetings": scheduled_team_meetings,
         "pending_invitations": pending_invitations,
+        "pending_client_bookings": pending_client_bookings,
     }

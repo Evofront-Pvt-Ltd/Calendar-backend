@@ -50,6 +50,7 @@ class BookingNotificationMessage:
     product_reference_number: str = ""
     meeting_url: str = ""
     booking_status: str = "scheduled"
+    source_domain: str = ""
     reply_to_email: str = ""
     notification_id: str = ""
     idempotency_key: str = ""
@@ -69,8 +70,28 @@ class BookingConfirmationMessage:
     meeting_url: str
     confirmation_link: str
     notes: str = ""
+    pending_approval: bool = False
     notification_id: str = ""
     idempotency_key: str = ""
+
+
+@dataclass(frozen=True)
+class ControllerVerifyMessage:
+    recipient_email: str
+    recipient_name: str
+    product_name: str
+    verify_link: str
+    expires_days: int = 7
+
+
+@dataclass(frozen=True)
+class MemberVerifyMessage:
+    recipient_email: str
+    recipient_name: str
+    product_name: str
+    role: str
+    verify_link: str
+    expires_days: int = 7
 
 
 @dataclass(frozen=True)
@@ -93,6 +114,12 @@ class EmailProvider:
     async def send_booking_confirmation(self, message: BookingConfirmationMessage) -> EmailDeliveryResult:
         raise NotImplementedError
 
+    async def send_controller_verification(self, message: ControllerVerifyMessage) -> EmailDeliveryResult:
+        raise NotImplementedError
+
+    async def send_member_verification(self, message: MemberVerifyMessage) -> EmailDeliveryResult:
+        raise NotImplementedError
+
 
 class DisabledEmailProvider(EmailProvider):
     async def send_meeting_invitation(self, message: InvitationEmailMessage) -> EmailDeliveryResult:
@@ -111,6 +138,18 @@ class DisabledEmailProvider(EmailProvider):
         return EmailDeliveryResult(
             status="PENDING_EMAIL_INTEGRATION",
             failure_reason="Booking created. Email delivery is not enabled yet.",
+        )
+
+    async def send_controller_verification(self, message: ControllerVerifyMessage) -> EmailDeliveryResult:
+        return EmailDeliveryResult(
+            status="PENDING_EMAIL_INTEGRATION",
+            failure_reason="Verification email created. Email delivery is not enabled yet.",
+        )
+
+    async def send_member_verification(self, message: MemberVerifyMessage) -> EmailDeliveryResult:
+        return EmailDeliveryResult(
+            status="PENDING_EMAIL_INTEGRATION",
+            failure_reason="Verification email created. Email delivery is not enabled yet.",
         )
 
 
@@ -160,6 +199,107 @@ class SendGridInvitationProvider(EmailProvider):
             temporary=result.temporary,
         )
 
+    async def send_controller_verification(self, message: ControllerVerifyMessage) -> EmailDeliveryResult:
+        result = await sendgrid_email_provider.send_email(self._controller_verify_email(message))
+        return EmailDeliveryResult(
+            status=result.status,
+            provider_message_id=result.provider_message_id,
+            failure_reason=result.failure_reason,
+            attempts=result.attempts,
+            temporary=result.temporary,
+        )
+
+    async def send_member_verification(self, message: MemberVerifyMessage) -> EmailDeliveryResult:
+        result = await sendgrid_email_provider.send_email(self._member_verify_email(message))
+        return EmailDeliveryResult(
+            status=result.status,
+            provider_message_id=result.provider_message_id,
+            failure_reason=result.failure_reason,
+            attempts=result.attempts,
+            temporary=result.temporary,
+        )
+
+    def _member_verify_email(self, message: MemberVerifyMessage) -> SendGridEmailMessage:
+        subject = f"Verify your work email for {message.product_name}"
+        text = "\n".join(
+            [
+                f"Hi {message.recipient_name or message.recipient_email},",
+                "",
+                f"You were added to {message.product_name} as {message.role}.",
+                "Confirm this address so you receive booking alerts for your shift.",
+                f"This link expires in {message.expires_days} days.",
+                "",
+                f"Verify this mail: {message.verify_link}",
+            ]
+        )
+        html_body = "".join(
+            [
+                '<div style="font-family:Arial,sans-serif;color:#14212f;line-height:1.5">',
+                f"<p>Hi {html.escape(message.recipient_name or message.recipient_email)},</p>",
+                f"<p>You were added to <strong>{html.escape(message.product_name)}</strong> as {html.escape(message.role)}.</p>",
+                "<p>Confirm this address so you receive booking alerts for your shift.</p>",
+                f"<p>This link expires in {message.expires_days} days.</p>",
+                f'<p><a href="{html.escape(message.verify_link)}" style="display:inline-block;padding:10px 16px;background:#0b5fff;color:#fff;text-decoration:none;border-radius:6px">Verify this mail</a></p>',
+                "</div>",
+            ]
+        )
+        return SendGridEmailMessage(
+            to=[EmailAddress(message.recipient_email, message.recipient_name)],
+            subject=subject,
+            text_content=text,
+            html_content=html_body,
+            template_id=settings.sendgrid_verification_template_id,
+            dynamic_template_data={
+                "recipient_name": clean_template_value(message.recipient_name or message.recipient_email),
+                "product_name": clean_template_value(message.product_name),
+                "role": clean_template_value(message.role),
+                "verify_link": message.verify_link,
+                "expires_days": message.expires_days,
+                "app_name": settings.sendgrid_from_name or settings.app_name,
+            },
+            categories=["calendar_booking", "member_verification"],
+            custom_args={"record_type": "member_verification"},
+        )
+
+    def _controller_verify_email(self, message: ControllerVerifyMessage) -> SendGridEmailMessage:
+        subject = f"Verify controller email for {message.product_name}"
+        text = "\n".join(
+            [
+                f"Hi {message.recipient_name or message.recipient_email},",
+                "",
+                f"Confirm this mailbox can receive booking alerts for {message.product_name}.",
+                f"This link expires in {message.expires_days} days.",
+                "",
+                f"Verify this mail: {message.verify_link}",
+            ]
+        )
+        html_body = "".join(
+            [
+                '<div style="font-family:Arial,sans-serif;color:#14212f;line-height:1.5">',
+                f"<p>Hi {html.escape(message.recipient_name or message.recipient_email)},</p>",
+                f"<p>Confirm this mailbox can receive booking alerts for <strong>{html.escape(message.product_name)}</strong>.</p>",
+                f"<p>This link expires in {message.expires_days} days.</p>",
+                f'<p><a href="{html.escape(message.verify_link)}" style="display:inline-block;padding:10px 16px;background:#0b5fff;color:#fff;text-decoration:none;border-radius:6px">Verify this mail</a></p>',
+                "</div>",
+            ]
+        )
+        return SendGridEmailMessage(
+            to=[EmailAddress(message.recipient_email, message.recipient_name)],
+            subject=subject,
+            text_content=text,
+            html_content=html_body,
+            template_id=settings.sendgrid_verification_template_id,
+            dynamic_template_data={
+                "recipient_name": clean_template_value(message.recipient_name or message.recipient_email),
+                "product_name": clean_template_value(message.product_name),
+                "verify_link": message.verify_link,
+                "expires_days": message.expires_days,
+                "app_name": settings.sendgrid_from_name or settings.app_name,
+            },
+            categories=["calendar_booking", "controller_verification"],
+            custom_args={"record_type": "controller_verification"},
+        )
+
     def _meeting_email(self, message: InvitationEmailMessage) -> SendGridEmailMessage:
         when = display_window(message.start_time, message.end_time, message.timezone)
         template_data = {
@@ -193,7 +333,11 @@ class SendGridInvitationProvider(EmailProvider):
     def _booking_email(self, message: BookingNotificationMessage) -> SendGridEmailMessage:
         when = display_window(message.start_time, message.end_time, message.timezone)
         category = message.issue_category.lower()
-        booking_kind = "team connection booking" if category == "team connection" else "support booking"
+        is_request = message.booking_status == "pending_approval"
+        if category == "team connection":
+            booking_kind = "team connection request" if is_request else "team connection booking"
+        else:
+            booking_kind = "support booking request" if is_request else "support booking"
         template_data = {
             "recipient_name": clean_template_value(message.recipient_name or message.recipient_email),
             "product_name": clean_template_value(message.product_name),
@@ -211,6 +355,7 @@ class SendGridInvitationProvider(EmailProvider):
             "booking_link": message.booking_link,
             "meeting_url": message.meeting_url,
             "booking_status": clean_template_value(message.booking_status),
+            "source_domain": clean_template_value(message.source_domain),
             "app_name": settings.sendgrid_from_name or settings.app_name,
         }
         return SendGridEmailMessage(
@@ -244,9 +389,14 @@ class SendGridInvitationProvider(EmailProvider):
             "notes": clean_template_value(message.notes),
             "app_name": settings.sendgrid_from_name or settings.app_name,
         }
+        subject = (
+            f"Booking request received: {message.event_title}"
+            if message.pending_approval
+            else f"Booking confirmed: {message.event_title}"
+        )
         return SendGridEmailMessage(
             to=[EmailAddress(message.recipient_email, message.recipient_name)],
-            subject=f"Booking confirmed: {message.event_title}",
+            subject=subject,
             text_content=self.booking_confirmation_plain_text(message, when),
             html_content=self.booking_confirmation_html(message, when),
             template_id=settings.sendgrid_booking_template_id,
@@ -303,7 +453,11 @@ class SendGridInvitationProvider(EmailProvider):
         parts = [
             f"Hi {message.recipient_name or message.recipient_email},",
             "",
-            f"You have a new support booking for {message.product_name}.",
+            (
+                f"You have a new booking request for {message.product_name}."
+                if message.booking_status == "pending_approval"
+                else f"You have a new support booking for {message.product_name}."
+            ),
             f"Client: {message.client_name}",
         ]
         if message.client_company:
@@ -322,11 +476,14 @@ class SendGridInvitationProvider(EmailProvider):
                 f"Status: {message.booking_status}",
             ]
         )
+        if message.source_domain:
+            parts.append(f"Website origin: {message.source_domain}")
         if message.meeting_url:
             parts.append(f"Meeting URL: {message.meeting_url}")
         if message.issue_description:
             parts.extend(["", message.issue_description])
-        parts.extend(["", f"View booking: {message.booking_link}"])
+        cta = "Accept this request" if "booking-claim" in (message.booking_link or "") else "View booking"
+        parts.extend(["", f"{cta}: {message.booking_link}"])
         return "\n".join(parts)
 
     @staticmethod
@@ -334,7 +491,11 @@ class SendGridInvitationProvider(EmailProvider):
         body = [
             '<div style="font-family:Arial,sans-serif;color:#14212f;line-height:1.5">',
             f"<p>Hi {html.escape(message.recipient_name or message.recipient_email)},</p>",
-            f"<p>You have a new support booking for <strong>{html.escape(message.product_name)}</strong>.</p>",
+            (
+                f"<p>You have a new booking request for <strong>{html.escape(message.product_name)}</strong>.</p>"
+                if message.booking_status == "pending_approval"
+                else f"<p>You have a new support booking for <strong>{html.escape(message.product_name)}</strong>.</p>"
+            ),
             f"<p><strong>Client:</strong> {html.escape(message.client_name)}</p>",
         ]
         if message.client_company:
@@ -353,11 +514,16 @@ class SendGridInvitationProvider(EmailProvider):
                 f"<p><strong>Status:</strong> {html.escape(message.booking_status)}</p>",
             ]
         )
+        if message.source_domain:
+            body.append(f"<p><strong>Website origin:</strong> {html.escape(message.source_domain)}</p>")
         if message.meeting_url:
             body.append(f'<p><a href="{html.escape(message.meeting_url)}">Join meeting</a></p>')
         if message.issue_description:
             body.append(f"<p>{escaped_lines(message.issue_description)}</p>")
-        body.append(f'<p><a href="{html.escape(message.booking_link)}">View booking</a></p>')
+        cta = "Accept this request" if "booking-claim" in (message.booking_link or "") else "View booking"
+        body.append(
+            f'<p><a href="{html.escape(message.booking_link)}" style="display:inline-block;padding:10px 16px;background:#0b5fff;color:#fff;text-decoration:none;border-radius:6px">{html.escape(cta)}</a></p>'
+        )
         body.append("</div>")
         return "".join(body)
 
@@ -366,7 +532,11 @@ class SendGridInvitationProvider(EmailProvider):
         parts = [
             f"Hi {message.recipient_name or message.recipient_email},",
             "",
-            f"Your booking is confirmed for {message.event_title}.",
+            (
+                f"Your booking request was received for {message.event_title}."
+                if message.pending_approval
+                else f"Your booking is confirmed for {message.event_title}."
+            ),
             f"Product/team: {message.product_name}",
             f"When: {when}",
         ]
@@ -387,7 +557,11 @@ class SendGridInvitationProvider(EmailProvider):
         body = [
             '<div style="font-family:Arial,sans-serif;color:#14212f;line-height:1.5">',
             f"<p>Hi {html.escape(message.recipient_name or message.recipient_email)},</p>",
-            f"<p>Your booking is confirmed for <strong>{html.escape(message.event_title)}</strong>.</p>",
+            (
+                f"<p>Your booking request was received for <strong>{html.escape(message.event_title)}</strong>.</p>"
+                if message.pending_approval
+                else f"<p>Your booking is confirmed for <strong>{html.escape(message.event_title)}</strong>.</p>"
+            ),
             f"<p><strong>Product/team:</strong> {html.escape(message.product_name)}</p>",
             f"<p><strong>When:</strong> {html.escape(when)}</p>",
         ]
@@ -424,6 +598,18 @@ class UnsupportedEmailProvider(EmailProvider):
             failure_reason=f"Unsupported email provider: {settings.email_provider}",
         )
 
+    async def send_controller_verification(self, message: ControllerVerifyMessage) -> EmailDeliveryResult:
+        return EmailDeliveryResult(
+            status="FAILED",
+            failure_reason=f"Unsupported email provider: {settings.email_provider}",
+        )
+
+    async def send_member_verification(self, message: MemberVerifyMessage) -> EmailDeliveryResult:
+        return EmailDeliveryResult(
+            status="FAILED",
+            failure_reason=f"Unsupported email provider: {settings.email_provider}",
+        )
+
 
 class EmailService:
     def provider(self) -> EmailProvider:
@@ -441,6 +627,12 @@ class EmailService:
 
     async def send_booking_confirmation(self, message: BookingConfirmationMessage) -> EmailDeliveryResult:
         return await self.provider().send_booking_confirmation(message)
+
+    async def send_controller_verification(self, message: ControllerVerifyMessage) -> EmailDeliveryResult:
+        return await self.provider().send_controller_verification(message)
+
+    async def send_member_verification(self, message: MemberVerifyMessage) -> EmailDeliveryResult:
+        return await self.provider().send_member_verification(message)
 
 
 email_service = EmailService()

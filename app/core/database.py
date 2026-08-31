@@ -44,6 +44,12 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
             await db.pending_registrations.drop_index(index_name)
     await db.pending_registrations.create_index("expires_at", expireAfterSeconds=0)
 
+    await db.refresh_tokens.create_index("token_hash", unique=True)
+    await db.refresh_tokens.create_index("user_id")
+    await db.refresh_tokens.create_index("expires_at", expireAfterSeconds=0)
+    await db.login_attempts.create_index("email", unique=True)
+    await db.login_attempts.create_index("expires_at", expireAfterSeconds=0)
+
     await db.google_oauth_states.create_index("state_hash", unique=True)
     await db.google_oauth_states.create_index("expires_at", expireAfterSeconds=0)
     await db.google_oauth_states.create_index("user_id")
@@ -69,6 +75,8 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         unique=True,
         partialFilterExpression={"status": "active"},
     )
+    await db.product_memberships.create_index("member_verification_token")
+    await db.product_memberships.create_index("member_verification_status")
 
     await db.event_types.create_index(
         [("owner_id", ASCENDING), ("slug", ASCENDING)],
@@ -164,6 +172,12 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.booking_notifications.create_index("recipient_user_id")
     await db.booking_notifications.create_index("provider_message_id")
     await db.booking_notifications.create_index("idempotency_key", unique=True)
+    await db.product_controllers.create_index([("product_id", ASCENDING), ("email", ASCENDING)], unique=True)
+    await db.product_controllers.create_index("verification_token")
+    await db.product_controllers.create_index("status")
+    await db.booking_claim_alerts.create_index([("product_id", ASCENDING), ("recipient_user_id", ASCENDING), ("status", ASCENDING)])
+    await db.booking_claim_alerts.create_index([("booking_id", ASCENDING), ("recipient_user_id", ASCENDING)], unique=True)
+    await db.booking_claim_alerts.create_index("claim_token", unique=True)
     await db.sendgrid_events.create_index("sg_event_id", unique=True)
     await db.sendgrid_events.create_index("sg_message_id")
     await db.sendgrid_events.create_index("event")

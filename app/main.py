@@ -20,8 +20,19 @@ from app.routers import (
 )
 
 
+def verify_signing_secret() -> None:
+    if settings.environment.lower() in {"development", "test", "local"}:
+        return
+    if settings.jwt_secret_is_insecure:
+        raise RuntimeError(
+            "JWT_SECRET is missing, too short, or still set to a placeholder. "
+            "Set a random secret of at least 32 characters before starting in this environment."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    verify_signing_secret()
     await connect_to_mongo()
     yield
     await close_mongo_connection()

@@ -7,16 +7,33 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
 from app.core.database import get_database
-from app.core.security import create_access_token, get_current_user, hash_password, verify_password
-from app.core.utils import as_utc, now_utc, public_doc, unique_slug
+from app.core.security import (
+    BLOCKED_USER_STATUSES,
+    create_access_token,
+    get_current_user,
+    get_current_user_optional,
+    hash_password,
+    verify_password,
+)
+from app.core.utils import as_utc, now_utc, object_id, public_doc, unique_slug
 from app.schemas import (
     AuthResponse,
     LoginRequest,
+    LogoutRequest,
+    LogoutResponse,
+    RefreshRequest,
+    RefreshResponse,
     RegisterRequest,
     RegisterResendRequest,
     RegisterStartResponse,
     RegisterVerifyRequest,
     UserPublic,
+)
+from app.services.auth_tokens import (
+    issue_refresh_token,
+    revoke_all_for_user,
+    revoke_refresh_token,
+    rotate_refresh_token,
 )
 from app.services.sendgrid import EmailProviderError, EmailVerificationMessage, sendgrid_email_provider
 from app.services.scheduling import default_availability, normalize_timezone, timezone_or_400
@@ -130,12 +147,49 @@ async def send_registration_otp(email: str, name: str, otp: str) -> str:
     # return "msg91"
 
 
-def auth_response(user: dict) -> AuthResponse:
-    token = create_access_token(
-        str(user["_id"]),
-        expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+def issue_access_token(user_id: str) -> tuple[str, int]:
+    expires_in = settings.access_token_expire_minutes * 60
+    token = create_access_token(user_id, expires_delta=timedelta(seconds=expires_in))
+    return token, expires_in
+
+
+async def auth_response(user: dict) -> AuthResponse:
+    access_token, expires_in = issue_access_token(str(user["_id"]))
+    refresh_token, _ = await issue_refresh_token(str(user["_id"]))
+    return AuthResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=expires_in,
+        user=UserPublic(**public_doc(user)),
     )
-    return AuthResponse(access_token=token, user=UserPublic(**public_doc(user)))
+
+
+async def register_failed_login(email: str) -> None:
+    window = timedelta(minutes=settings.login_attempt_window_minutes)
+    await get_database().login_attempts.update_one(
+        {"email": email},
+        {"$inc": {"attempt_count": 1}, "$set": {"expires_at": now_utc() + window}},
+        upsert=True,
+    )
+
+
+async def clear_failed_logins(email: str) -> None:
+    await get_database().login_attempts.delete_one({"email": email})
+
+
+async def guard_login_attempts(email: str) -> None:
+    record = await get_database().login_attempts.find_one({"email": email})
+    if record is None:
+        return
+    if as_utc(record["expires_at"]) <= now_utc():
+        await clear_failed_logins(email)
+        return
+    if record.get("attempt_count", 0) >= settings.login_max_attempts:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed sign-in attempts. Please try again later.",
+            headers={"Retry-After": str(retry_after_seconds(record["expires_at"]))},
+        )
 
 
 # Google OAuth redirect helper is parked for future reactivation.
@@ -431,20 +485,71 @@ async def register_verify(payload: RegisterVerifyRequest) -> AuthResponse:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An account already exists for this email")
 
     await db.pending_registrations.delete_many({"email": email})
-    return auth_response(user)
+    return await auth_response(user)
 
 
 @router.post("/login", response_model=AuthResponse)
 async def login(payload: LoginRequest) -> AuthResponse:
     db = get_database()
-    user = await db.users.find_one({"email": normalize_auth_email(payload.email)})
+    email = normalize_auth_email(payload.email)
+    await guard_login_attempts(email)
+    user = await db.users.find_one({"email": email})
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=EMAIL_NOT_REGISTERED_MESSAGE)
     if not verify_password(payload.password, user.get("password_hash", "")):
+        await register_failed_login(email)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=PASSWORD_INCORRECT_MESSAGE)
     if user.get("email_verified") is False:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Please verify your email before continuing")
-    return auth_response(user)
+    if user.get("status") in BLOCKED_USER_STATUSES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is no longer active")
+    await clear_failed_logins(email)
+    return await auth_response(user)
+
+
+@router.post("/refresh", response_model=RefreshResponse)
+async def refresh(payload: RefreshRequest) -> RefreshResponse:
+    rotated = await rotate_refresh_token(payload.refresh_token)
+    if rotated is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Please sign in again.",
+        )
+
+    user_id, new_refresh_token, _ = rotated
+    user = await get_database().users.find_one({"_id": object_id(user_id)})
+    if user is None or user.get("status") in BLOCKED_USER_STATUSES:
+        await revoke_all_for_user(user_id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Please sign in again.",
+        )
+
+    access_token, expires_in = issue_access_token(user_id)
+    return RefreshResponse(
+        access_token=access_token,
+        refresh_token=new_refresh_token,
+        expires_in=expires_in,
+    )
+
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(
+    payload: LogoutRequest,
+    user: dict | None = Depends(get_current_user_optional),
+) -> LogoutResponse:
+    # Logout stays usable with an already-expired access token so a stale session can still be revoked.
+    if payload.all_sessions:
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to sign out of all devices",
+            )
+        await revoke_all_for_user(str(user["_id"]))
+        return LogoutResponse(message="Signed out of all devices")
+    if payload.refresh_token:
+        await revoke_refresh_token(payload.refresh_token)
+    return LogoutResponse()
 
 
 # Google OAuth endpoints are parked for future reactivation.

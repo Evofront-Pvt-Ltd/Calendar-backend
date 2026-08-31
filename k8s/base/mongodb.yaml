@@ -34,32 +34,37 @@ spec:
         - name: mongodb
           image: mongo:7
           imagePullPolicy: IfNotPresent
+          # WiredTiger sizes its cache from host RAM, not the cgroup limit, so it must be
+          # pinned explicitly or the container is OOMKilled on a small memory limit.
+          args: ["--wiredTigerCacheSizeGB", "0.25", "--bind_ip_all"]
           ports:
             - name: mongodb
               containerPort: 27017
           securityContext:
             allowPrivilegeEscalation: false
+          # TCP probes instead of mongosh: each mongosh invocation costs ~60-100Mi inside
+          # the container cgroup, which was pushing this pod over its memory limit.
           readinessProbe:
-            exec:
-              command: ["mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+            tcpSocket:
+              port: mongodb
             initialDelaySeconds: 15
             periodSeconds: 15
-            timeoutSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 8
           livenessProbe:
-            exec:
-              command: ["mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+            tcpSocket:
+              port: mongodb
             initialDelaySeconds: 30
             periodSeconds: 20
-            timeoutSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 5
           resources:
             requests:
               cpu: 25m
-              memory: 192Mi
-            limits:
-              cpu: 250m
               memory: 384Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
           volumeMounts:
             - name: data
               mountPath: /data/db

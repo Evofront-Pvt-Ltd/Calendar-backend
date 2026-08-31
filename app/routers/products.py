@@ -22,9 +22,13 @@ from app.core.products import (
 from app.core.security import get_current_user
 from app.core.utils import as_utc, now_utc, object_id, public_doc
 from app.schemas import (
+    BookingClaimAlertOut,
+    ClientBookingOut,
     MeetingCreate,
     MeetingInvitationOut,
     MeetingOut,
+    ProductControllerCreate,
+    ProductControllerOut,
     ProductCreate,
     ProductMemberCreate,
     ProductMemberOut,
@@ -34,6 +38,19 @@ from app.schemas import (
 )
 from app.services.email import InvitationEmailMessage, email_service
 from app.services.google_calendar import google_calendar_service
+from app.services.product_controllers import (
+    add_controller,
+    list_controllers,
+    resend_by_id,
+    revoke_controller,
+)
+from app.services.booking_claims import claim_booking_as_user, list_open_claim_alerts_for_user
+from app.services.product_members import (
+    new_verification_payload,
+    resend_member_verification,
+    send_member_verification,
+    verification_fields,
+)
 from app.services.scheduling import normalize_timezone, timezone_or_400
 
 router = APIRouter(prefix="/api/products", tags=["products"])
@@ -83,6 +100,7 @@ async def membership_to_out(membership: dict[str, Any]) -> ProductMemberOut:
         role=membership.get("role", "member"),
         membership_status=membership.get("status", "active"),
         invitation_status=membership.get("invitation_status", "pending_email_integration"),
+        **verification_fields(membership, user),
         added_by=membership.get("invited_by", ""),
         added_by_name=added_by.get("name", "") if added_by else "",
         date_added=membership.get("created_at"),
@@ -205,6 +223,63 @@ async def get_product(product_id: str, user: dict = Depends(get_current_user)) -
     return await product_to_out(context.product, context.membership, user)
 
 
+@router.get("/{product_id}/controllers", response_model=list[ProductControllerOut])
+async def get_product_controllers(product_id: str, user: dict = Depends(get_current_user)) -> list[ProductControllerOut]:
+    context = await product_context(user, product_id, "view_product")
+    return [ProductControllerOut(**item) for item in await list_controllers(context.product)]
+
+
+@router.post("/{product_id}/controllers", response_model=ProductControllerOut, status_code=status.HTTP_201_CREATED)
+async def create_product_controller(
+    product_id: str,
+    payload: ProductControllerCreate,
+    user: dict = Depends(get_current_user),
+) -> ProductControllerOut:
+    context = await product_context(user, product_id, "manage_controllers", require_active=True)
+    created = await add_controller(context.product, user, str(payload.email))
+    return ProductControllerOut(**created)
+
+
+@router.post("/{product_id}/controllers/{controller_id}/resend", response_model=ProductControllerOut)
+async def resend_product_controller(
+    product_id: str,
+    controller_id: str,
+    user: dict = Depends(get_current_user),
+) -> ProductControllerOut:
+    context = await product_context(user, product_id, "manage_controllers", require_active=True)
+    updated = await resend_by_id(context.product, controller_id)
+    return ProductControllerOut(**updated)
+
+
+@router.delete("/{product_id}/controllers/{controller_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_product_controller(
+    product_id: str,
+    controller_id: str,
+    user: dict = Depends(get_current_user),
+) -> None:
+    context = await product_context(user, product_id, "manage_controllers", require_active=True)
+    await revoke_controller(context.product, controller_id)
+
+
+@router.get("/{product_id}/claim-alerts", response_model=list[BookingClaimAlertOut])
+async def get_claim_alerts(product_id: str, user: dict = Depends(get_current_user)) -> list[BookingClaimAlertOut]:
+    await product_context(user, product_id, "view_product")
+    return [BookingClaimAlertOut(**item) for item in await list_open_claim_alerts_for_user(product_id, user)]
+
+
+@router.post("/{product_id}/bookings/{booking_id}/claim", response_model=ClientBookingOut)
+async def claim_product_booking(
+    product_id: str,
+    booking_id: str,
+    user: dict = Depends(get_current_user),
+) -> ClientBookingOut:
+    context = await product_context(user, product_id, "view_product", require_active=True)
+    booking = await claim_booking_as_user(context.product, user, booking_id)
+    from app.services.product_availability import client_booking_to_out
+
+    return ClientBookingOut(**await client_booking_to_out(booking))
+
+
 @router.patch("/{product_id}", response_model=ProductOut)
 async def update_product(product_id: str, payload: ProductUpdate, user: dict = Depends(get_current_user)) -> ProductOut:
     context = await product_context(user, product_id, "edit_product")
@@ -296,18 +371,31 @@ async def add_member(product_id: str, payload: ProductMemberCreate, user: dict =
         "user_id": str(existing_user["_id"]),
         "role": payload.role,
         "status": payload.status,
-        "invitation_status": "pending_email_integration",
+        "invitation_status": "verification_sent",
         "invited_by": str(user["_id"]),
         "joined_at": None if existing_user.get("auth_provider") == "invited" else timestamp,
         "last_invitation_at": timestamp,
         "created_at": timestamp,
         "updated_at": timestamp,
+        **new_verification_payload(str(user["_id"])),
     }
     try:
         result = await db.product_memberships.insert_one(membership)
     except DuplicateKeyError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This member already belongs to this product") from None
     membership["_id"] = result.inserted_id
+    await send_member_verification(context.product, membership, existing_user)
+    return await membership_to_out(membership)
+
+
+@router.post("/{product_id}/members/{membership_id}/resend-verification", response_model=ProductMemberOut)
+async def resend_member_work_email_verification(
+    product_id: str,
+    membership_id: str,
+    user: dict = Depends(get_current_user),
+) -> ProductMemberOut:
+    context = await product_context(user, product_id, "manage_members", require_active=True)
+    membership = await resend_member_verification(context.product, membership_id)
     return await membership_to_out(membership)
 
 

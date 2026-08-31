@@ -16,6 +16,9 @@ from app.core.utils import object_id
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
+# "invited" is intentionally allowed: invited users hold no password hash and cannot reach a token anyway.
+BLOCKED_USER_STATUSES = frozenset({"disabled", "suspended", "deactivated", "removed"})
+
 
 def _b64encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
@@ -48,10 +51,25 @@ def verify_password(password: str, password_hash: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-def create_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
+TOKEN_TYPE_ACCESS = "access"
+
+
+def create_access_token(
+    subject: str,
+    expires_delta: timedelta | None = None,
+    token_type: str = TOKEN_TYPE_ACCESS,
+    claims: dict[str, Any] | None = None,
+) -> str:
     expires_delta = expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     header = {"alg": "HS256", "typ": "JWT"}
-    payload = {"sub": subject, "exp": int(time.time() + expires_delta.total_seconds())}
+    issued_at = int(time.time())
+    payload = {
+        **(claims or {}),
+        "sub": subject,
+        "type": token_type,
+        "iat": issued_at,
+        "exp": int(issued_at + expires_delta.total_seconds()),
+    }
     signing_input = ".".join(
         [
             _b64encode(json.dumps(header, separators=(",", ":")).encode("utf-8")),
@@ -62,14 +80,19 @@ def create_access_token(subject: str, expires_delta: timedelta | None = None) ->
     return f"{signing_input}.{_b64encode(signature.digest())}"
 
 
-def decode_access_token(token: str) -> dict[str, Any]:
+def decode_access_token(token: str, expected_type: str = TOKEN_TYPE_ACCESS) -> dict[str, Any]:
     try:
         header_text, payload_text, signature_text = token.split(".", 2)
         signing_input = f"{header_text}.{payload_text}"
+        header = json.loads(_b64decode(header_text))
+        if header.get("alg") != "HS256":
+            raise ValueError("Unsupported algorithm")
         expected = hmac.new(settings.jwt_secret.encode("utf-8"), signing_input.encode("ascii"), hashlib.sha256)
         if not hmac.compare_digest(_b64encode(expected.digest()), signature_text):
             raise ValueError("Invalid signature")
         payload = json.loads(_b64decode(payload_text))
+        if payload.get("type") != expected_type:
+            raise ValueError("Unexpected token type")
         if int(payload.get("exp", 0)) < int(time.time()):
             raise ValueError("Expired token")
         return payload
@@ -78,6 +101,18 @@ def decode_access_token(token: str) -> dict[str, Any]:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired authentication token",
         ) from None
+
+
+async def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> dict[str, Any] | None:
+    """Resolve the caller when a usable token is present, without rejecting anonymous requests."""
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        return None
+    try:
+        return await get_current_user(credentials)
+    except HTTPException:
+        return None
 
 
 async def get_current_user(
@@ -95,5 +130,7 @@ async def get_current_user(
     user = await get_database().users.find_one({"_id": user_id})
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User no longer exists")
+    if user.get("status") in BLOCKED_USER_STATUSES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is no longer active")
     return user
 

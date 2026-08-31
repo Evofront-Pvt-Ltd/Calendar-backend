@@ -62,6 +62,18 @@ EMAIL_PROVIDER=sendgrid
 
 `ORGANIZATION_EMAIL_DOMAIN` is enforced by the backend when adding product team members. `EMAIL_ENABLED=false` still creates meetings and invitation records, with delivery status `PENDING_EMAIL_INTEGRATION` and copyable invitation links.
 
+## Authentication
+
+Sessions use a short-lived HS256 access token plus a rotating opaque refresh token.
+
+- `POST /api/auth/login` and `POST /api/auth/register/verify` return `access_token`, `refresh_token`, and `expires_in`.
+- Send the access token as `Authorization: Bearer <access-token>`; it expires after `ACCESS_TOKEN_EXPIRE_MINUTES` (default 30).
+- `POST /api/auth/refresh` exchanges a refresh token for a new pair. The old refresh token is revoked on use, and presenting it again revokes every session for that user as a theft signal.
+- `POST /api/auth/logout` revokes the supplied refresh token; pass `{"all_sessions": true}` with a valid access token to sign out everywhere.
+- Refresh tokens live in the `refresh_tokens` collection as SHA-256 hashes and expire after `REFRESH_TOKEN_EXPIRE_DAYS` (default 30).
+- Login is throttled per email: `LOGIN_MAX_ATTEMPTS` failures within `LOGIN_ATTEMPT_WINDOW_MINUTES` return 429 until the window lapses.
+- Outside development, the app refuses to start if `JWT_SECRET` is a known placeholder or shorter than 32 characters.
+
 Main authenticated endpoints:
 
 - `GET /api/products`
@@ -85,11 +97,30 @@ Legacy Google OAuth code is commented in `app/routers/auth.py`, `app/services/go
 Each product can act as a v1 workspace for an external website. Configure these values from Product Settings:
 
 - Approved website domains, for example `https://www.websitex.com`
-- Controller email, which receives new booking requests for that workspace
+- Controller emails, which receive new booking requests for that workspace once verified
 - Support email
 - Booking mode: `instant` or `approval`
 - Widget enabled/disabled
 - Widget button/action labels and side position
+
+## Verified Work Emails and Shift Claims
+
+Team members and controller mailboxes both use a 7-day "Verify this mail" link, and
+verification is independent of dashboard login:
+
+- Adding a team member sends a verification email to their work address
+- Only verified members join the equal-shift rotation and can be assigned bookings
+- A verified member with a login gets a dashboard claim alert plus email; a member
+  without a login gets email only and accepts from `/booking-claim/{token}`
+- The first accept wins; remaining alerts close
+- If nobody is on shift for the requested slot, alerts fall back to controllers
+- When Google Calendar is enabled and the accepting member has no connected calendar,
+  the approver's calendar is used, then the workspace owner's
+
+Public verification endpoints:
+
+- `GET /api/public/member-verify/{token}`
+- `GET /api/public/controller-verify/{token}`
 
 Install the widget on the approved website with the product's public widget ID:
 

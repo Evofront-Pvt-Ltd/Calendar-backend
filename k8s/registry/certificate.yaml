@@ -1,0 +1,16 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: calendar-registry-tls
+  namespace: calendar
+  labels:
+    app: calendar-registry
+    app.kubernetes.io/part-of: calendar
+    app.kubernetes.io/name: calendar-registry
+spec:
+  secretName: calendar-registry-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - calendar-registry.212.2.249.45.nip.io

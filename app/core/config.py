@@ -2,6 +2,16 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Placeholder secrets that ship in the repo and must never sign production tokens.
+INSECURE_JWT_SECRETS = frozenset(
+    {
+        "change-me-in-production",
+        "replace-with-a-long-random-secret",
+        "local-docker-secret-change-before-production",
+        "ci-container-validation-not-for-production",
+    }
+)
+
 
 class Settings(BaseSettings):
     app_name: str = "Calendar Booking API"
@@ -9,7 +19,10 @@ class Settings(BaseSettings):
     mongodb_url: str = "mongodb://localhost:27017"
     mongodb_db: str = "calendar_booking"
     jwt_secret: str = "change-me-in-production"
-    access_token_expire_minutes: int = 60 * 24 * 7
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 30
+    login_max_attempts: int = 10
+    login_attempt_window_minutes: int = 15
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     frontend_url: str = "http://localhost:3000"
     application_base_url: str = "http://127.0.0.1:3000"
@@ -73,6 +86,10 @@ class Settings(BaseSettings):
     # msg91_email_verification_template_id: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def jwt_secret_is_insecure(self) -> bool:
+        return self.jwt_secret in INSECURE_JWT_SECRETS or len(self.jwt_secret) < 32
 
     @property
     def cors_origin_list(self) -> list[str]:

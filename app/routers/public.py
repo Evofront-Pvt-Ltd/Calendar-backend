@@ -1,11 +1,12 @@
 from datetime import date
 import secrets
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
 from app.core.database import get_database
+from app.core.widget import request_widget_origin
 from app.core.products import ensure_public_booking_token
 from app.core.utils import as_utc, now_utc, object_id, public_doc
 from app.schemas import (
@@ -14,7 +15,10 @@ from app.schemas import (
     BookingOut,
     ClientBookingCreatePublic,
     ClientBookingOut,
+    ControllerVerifyOut,
     EventTypeOut,
+    MemberVerifyOut,
+    PublicBookingClaimOut,
     PublicLandingProductOut,
     PublicMeetingInvitationOut,
     PublicProductBookingOut,
@@ -155,13 +159,16 @@ async def public_product_slots(
 
 
 @router.post("/products/{booking_token}/book", response_model=ClientBookingOut, status_code=status.HTTP_201_CREATED)
-async def public_product_book(booking_token: str, payload: ClientBookingCreatePublic) -> ClientBookingOut:
+async def public_product_book(booking_token: str, payload: ClientBookingCreatePublic, request: Request) -> ClientBookingOut:
     product = await find_public_product(booking_token)
+    origin = request_widget_origin(request)
     mode = str(product.get("booking_mode") or settings.public_booking_mode or "instant").lower()
     if mode in {"approval", "approval_required", "pending_approval"}:
-        booking = await create_pending_client_booking(product, payload, widget_id=booking_token)
+        booking = await create_pending_client_booking(
+            product, payload, source_domain=origin, widget_id=booking_token
+        )
     else:
-        booking = await create_client_booking(product, payload)
+        booking = await create_client_booking(product, payload, source_domain=origin, widget_id=booking_token)
     return ClientBookingOut(**await client_booking_to_out(booking))
 
 
@@ -358,3 +365,34 @@ async def book_event(user_slug: str, event_slug: str, payload: BookingCreatePubl
             updates["failed_at"] = now_utc()
         await get_database().booking_notifications.update_one({"_id": notification["_id"]}, {"$set": updates})
     return BookingOut(**public_doc(booking))
+
+
+@router.get("/controller-verify/{token}", response_model=ControllerVerifyOut)
+async def public_controller_verify(token: str) -> ControllerVerifyOut:
+    from app.services.product_controllers import verify_controller_token
+
+    result = await verify_controller_token(token)
+    return ControllerVerifyOut(**result)
+
+
+@router.get("/member-verify/{token}", response_model=MemberVerifyOut)
+async def public_member_verify(token: str) -> MemberVerifyOut:
+    from app.services.product_members import verify_member_token
+
+    return MemberVerifyOut(**await verify_member_token(token))
+
+
+@router.get("/booking-claim/{token}", response_model=PublicBookingClaimOut)
+async def public_booking_claim_preview(token: str) -> PublicBookingClaimOut:
+    from app.services.booking_claims import public_claim_preview
+
+    return PublicBookingClaimOut(**await public_claim_preview(token))
+
+
+@router.post("/booking-claim/{token}", response_model=ClientBookingOut)
+async def public_booking_claim_accept(token: str) -> ClientBookingOut:
+    from app.services.booking_claims import claim_booking_by_token
+    from app.services.product_availability import client_booking_to_out
+
+    booking = await claim_booking_by_token(token)
+    return ClientBookingOut(**await client_booking_to_out(booking))

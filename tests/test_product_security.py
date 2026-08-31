@@ -22,9 +22,24 @@ from app.routers.auth import (
     raise_email_already_registered,
     user_is_registered_and_verified,
 )
-from app.schemas import ClientBookingCreatePublic, MeetingCreate
-from app.services.email import BookingConfirmationMessage, BookingNotificationMessage, InvitationEmailMessage, email_service
+from app.schemas import ClientBookingCreatePublic, ClientBookingOut, MeetingCreate
+from app.services.email import (
+    BookingConfirmationMessage,
+    BookingNotificationMessage,
+    InvitationEmailMessage,
+    SendGridInvitationProvider,
+    email_service,
+)
+from app.services.booking_claims import CLAIM_TOKEN_MAX_DAYS, _ensure_claim_token_live
 from app.services.product_availability import divide_coverage_minutes, local_window_to_utc, window_duration_minutes
+from app.services.product_members import (
+    MEMBER_VERIFY_DAYS,
+    has_login_identity,
+    is_verified,
+    new_verification_payload,
+    verification_reason,
+    verification_state,
+)
 from app.services.scheduling import build_slots, default_availability
 
 
@@ -55,6 +70,11 @@ class ProductSecurityTests(unittest.TestCase):
         self.assertIn("create_meetings", permissions)
         self.assertIn("invite_members", permissions)
         self.assertIn("manage_members", permissions)
+        self.assertNotIn("manage_controllers", permissions)
+
+    def test_product_owner_can_manage_controllers(self) -> None:
+        permissions = permissions_for_membership({"role": "product_owner"})
+        self.assertIn("manage_controllers", permissions)
 
     def test_member_role_cannot_manage_members(self) -> None:
         permissions = permissions_for_membership({"role": "member"})
@@ -81,6 +101,41 @@ class ProductSecurityTests(unittest.TestCase):
     def test_localhost_is_only_development_origin_shape(self) -> None:
         self.assertTrue(is_local_development_origin("http://localhost:3000"))
         self.assertFalse(is_local_development_origin("https://example.com"))
+
+
+class MemberVerificationTests(unittest.TestCase):
+    def test_pending_membership_is_not_rotation_eligible(self) -> None:
+        membership = {"member_verification_status": "pending", "role": "member", "status": "active"}
+        user = {"status": "invited", "password_hash": "", "auth_provider": "invited"}
+        self.assertEqual(verification_state(membership, user), "pending")
+        self.assertFalse(is_verified(membership, user))
+
+    def test_verified_membership_without_login_is_rotation_eligible(self) -> None:
+        membership = {"member_verification_status": "verified", "role": "member", "status": "active"}
+        user = {"status": "invited", "password_hash": "", "auth_provider": "invited"}
+        self.assertTrue(is_verified(membership, user))
+        self.assertFalse(has_login_identity(user))
+
+    def test_expired_verification_window_reports_expired(self) -> None:
+        membership = {
+            "member_verification_status": "pending",
+            "member_verification_expires_at": datetime.now(UTC) - timedelta(days=1),
+        }
+        self.assertEqual(verification_state(membership, {"status": "invited"}), "expired")
+        self.assertEqual(verification_reason("expired"), "Verification link expired")
+
+    def test_legacy_membership_with_active_login_stays_verified(self) -> None:
+        membership = {"role": "calendar_controller", "status": "active"}
+        user = {"status": "active", "password_hash": "hashed", "auth_provider": "password"}
+        self.assertTrue(is_verified(membership, user))
+        self.assertTrue(has_login_identity(user))
+
+    def test_verification_payload_expires_in_seven_days(self) -> None:
+        payload = new_verification_payload("owner-id")
+        self.assertEqual(payload["member_verification_status"], "pending")
+        self.assertTrue(payload["member_verification_token"])
+        remaining_days = (payload["member_verification_expires_at"] - datetime.now(UTC)).days
+        self.assertEqual(remaining_days, MEMBER_VERIFY_DAYS - 1)
 
 
 class EmailOtpRegistrationTests(unittest.TestCase):
@@ -242,6 +297,83 @@ class EmailServiceTests(unittest.IsolatedAsyncioTestCase):
         finally:
             settings.email_enabled = original
 
+    def test_controller_request_email_includes_website_origin(self) -> None:
+        start = datetime.now(UTC) + timedelta(hours=1)
+        message = BookingNotificationMessage(
+            recipient_email="controller@amazon.com",
+            recipient_name="AWS Workspace",
+            product_name="Amazon AWS",
+            client_name="Client",
+            client_company="Acme",
+            issue_category="Team connection",
+            issue_title="Connect with AWS team",
+            issue_description="Need a meeting",
+            priority="normal",
+            start_time=start,
+            end_time=start + timedelta(minutes=30),
+            timezone="UTC",
+            duration_minutes=30,
+            booking_link="https://app.example.test/dashboard",
+            booking_status="pending_approval",
+            source_domain="https://aws.amazon.com",
+        )
+        text = SendGridInvitationProvider.booking_plain_text(message, "Monday")
+        html_body = SendGridInvitationProvider.booking_html(message, "Monday")
+        self.assertIn("booking request", text)
+        self.assertIn("Website origin: https://aws.amazon.com", text)
+        self.assertIn("https://aws.amazon.com", html_body)
+
+    def test_pending_client_confirmation_uses_request_received_copy(self) -> None:
+        start = datetime.now(UTC) + timedelta(hours=1)
+        message = BookingConfirmationMessage(
+            recipient_email="client@example.com",
+            recipient_name="Client",
+            product_name="Amazon AWS",
+            event_title="Amazon AWS team connection request",
+            organizer_name="Amazon AWS Support Team",
+            start_time=start,
+            end_time=start + timedelta(minutes=30),
+            timezone="UTC",
+            location="Pending controller approval",
+            meeting_url="",
+            confirmation_link="https://app.example.test/support/token",
+            pending_approval=True,
+        )
+        text = SendGridInvitationProvider.booking_confirmation_plain_text(message, "Monday")
+        self.assertIn("request was received", text)
+        self.assertNotIn("is confirmed", text)
+
+
+class WorkspaceBookingSchemaTests(unittest.TestCase):
+    def test_client_booking_out_exposes_source_domain(self) -> None:
+        start = datetime.now(UTC) + timedelta(hours=1)
+        booking = ClientBookingOut(
+            id="abc123abc123abc123abc123",
+            organization_id="default",
+            product_id="prod123prod123prod123prod",
+            assigned_member_id="member123member12",
+            client_name="Client",
+            client_email="client@example.com",
+            issue_category="Team connection",
+            issue_title="Connect",
+            priority="normal",
+            start_time_utc=start,
+            end_time_utc=start + timedelta(minutes=30),
+            client_timezone="UTC",
+            product_timezone="UTC",
+            status="pending_approval",
+            assignment_strategy="controller_review",
+            public_booking_reference="ref123",
+            source_domain="https://aws.amazon.com",
+            widget_id="widget-token",
+            booking_mode="approval",
+            created_at=start,
+            updated_at=start,
+        )
+        self.assertEqual(booking.source_domain, "https://aws.amazon.com")
+        self.assertEqual(booking.widget_id, "widget-token")
+        self.assertEqual(booking.booking_mode, "approval")
+
 
 class ProductAvailabilityDistributionTests(unittest.TestCase):
     def test_one_member_gets_full_shared_support_window(self) -> None:
@@ -326,3 +458,21 @@ class ProductAvailabilityDistributionTests(unittest.TestCase):
         slots = build_slots(availability, {"duration_minutes": 60}, [], target_date, target_date)
         self.assertEqual([slot["local_time"] for slot in slots], ["00:00", "01:00", "22:00", "23:00"])
         self.assertTrue(all(slot["local_date"] == target_date for slot in slots))
+
+class BookingClaimTokenTests(unittest.TestCase):
+    def test_expired_claim_token_is_rejected(self):
+        alert = {"claim_expires_at": datetime.now(UTC) - timedelta(minutes=1)}
+        with self.assertRaises(HTTPException) as caught:
+            _ensure_claim_token_live(alert)
+        self.assertEqual(caught.exception.status_code, 410)
+
+    def test_live_claim_token_is_accepted(self):
+        alert = {"claim_expires_at": datetime.now(UTC) + timedelta(hours=2)}
+        self.assertIsNone(_ensure_claim_token_live(alert))
+
+    def test_legacy_alert_without_expiry_is_accepted(self):
+        self.assertIsNone(_ensure_claim_token_live({}))
+        self.assertIsNone(_ensure_claim_token_live({"claim_expires_at": None}))
+
+    def test_claim_window_is_capped(self):
+        self.assertEqual(CLAIM_TOKEN_MAX_DAYS, 14)

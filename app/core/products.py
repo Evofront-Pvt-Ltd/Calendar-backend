@@ -28,6 +28,7 @@ PRODUCT_PERMISSIONS = {
         "manage_availability",
         "manage_event_types",
         "manage_contacts",
+        "manage_controllers",
     },
     "calendar_controller": {
         "view_product",
@@ -202,6 +203,10 @@ async def create_product_for_user(
         "role": "product_owner",
         "status": "active",
         "invitation_status": "accepted",
+        "member_verification_status": "verified",
+        "member_verification_token": "",
+        "member_verification_expires_at": None,
+        "member_verified_at": timestamp,
         "invited_by": str(user["_id"]),
         "joined_at": timestamp,
         "last_invitation_at": timestamp,
@@ -213,6 +218,10 @@ async def create_product_for_user(
         {"$setOnInsert": membership},
         upsert=True,
     )
+    if product.get("controller_email"):
+        from app.services.product_controllers import ensure_legacy_controller
+
+        await ensure_legacy_controller(product)
     return product
 
 
