@@ -172,6 +172,39 @@ async def public_product_book(booking_token: str, payload: ClientBookingCreatePu
     return ClientBookingOut(**await client_booking_to_out(booking))
 
 
+# Registered ahead of the /{user_slug} routes below: FastAPI matches in
+# declaration order, so the slug catch-alls would otherwise swallow these.
+@router.get("/controller-verify/{token}", response_model=ControllerVerifyOut)
+async def public_controller_verify(token: str) -> ControllerVerifyOut:
+    from app.services.product_controllers import verify_controller_token
+
+    result = await verify_controller_token(token)
+    return ControllerVerifyOut(**result)
+
+
+@router.get("/member-verify/{token}", response_model=MemberVerifyOut)
+async def public_member_verify(token: str) -> MemberVerifyOut:
+    from app.services.product_members import verify_member_token
+
+    return MemberVerifyOut(**await verify_member_token(token))
+
+
+@router.get("/booking-claim/{token}", response_model=PublicBookingClaimOut)
+async def public_booking_claim_preview(token: str) -> PublicBookingClaimOut:
+    from app.services.booking_claims import public_claim_preview
+
+    return PublicBookingClaimOut(**await public_claim_preview(token))
+
+
+@router.post("/booking-claim/{token}", response_model=ClientBookingOut)
+async def public_booking_claim_accept(token: str) -> ClientBookingOut:
+    from app.services.booking_claims import claim_booking_by_token
+    from app.services.product_availability import client_booking_to_out
+
+    booking = await claim_booking_by_token(token)
+    return ClientBookingOut(**await client_booking_to_out(booking))
+
+
 @router.get("/{user_slug}")
 async def public_profile(user_slug: str) -> dict:
     db = get_database()
@@ -367,32 +400,3 @@ async def book_event(user_slug: str, event_slug: str, payload: BookingCreatePubl
     return BookingOut(**public_doc(booking))
 
 
-@router.get("/controller-verify/{token}", response_model=ControllerVerifyOut)
-async def public_controller_verify(token: str) -> ControllerVerifyOut:
-    from app.services.product_controllers import verify_controller_token
-
-    result = await verify_controller_token(token)
-    return ControllerVerifyOut(**result)
-
-
-@router.get("/member-verify/{token}", response_model=MemberVerifyOut)
-async def public_member_verify(token: str) -> MemberVerifyOut:
-    from app.services.product_members import verify_member_token
-
-    return MemberVerifyOut(**await verify_member_token(token))
-
-
-@router.get("/booking-claim/{token}", response_model=PublicBookingClaimOut)
-async def public_booking_claim_preview(token: str) -> PublicBookingClaimOut:
-    from app.services.booking_claims import public_claim_preview
-
-    return PublicBookingClaimOut(**await public_claim_preview(token))
-
-
-@router.post("/booking-claim/{token}", response_model=ClientBookingOut)
-async def public_booking_claim_accept(token: str) -> ClientBookingOut:
-    from app.services.booking_claims import claim_booking_by_token
-    from app.services.product_availability import client_booking_to_out
-
-    booking = await claim_booking_by_token(token)
-    return ClientBookingOut(**await client_booking_to_out(booking))
