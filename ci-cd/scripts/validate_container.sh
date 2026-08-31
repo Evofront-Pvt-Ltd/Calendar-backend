@@ -28,10 +28,15 @@ if [ "${mongo_ready}" != "1" ]; then
   exit 1
 fi
 
+# A throwaway strong secret, not a placeholder: the startup guard blocklists the
+# known placeholders and only exempts development/test/local, so a literal here
+# would fail startup and the container could never be validated.
+VALIDATION_JWT_SECRET="$(openssl rand -hex 32)"
+
 docker run -d --name calendar-backend-validate --network calendar-validate -p 127.0.0.1:8000:8000 \
   -e MONGODB_URL=mongodb://calendar-mongo-validate:27017 \
   -e MONGODB_DB=calendar_booking \
-  -e JWT_SECRET=ci-container-validation-not-for-production \
+  -e JWT_SECRET="${VALIDATION_JWT_SECRET}" \
   -e ENVIRONMENT=ci \
   "${IMAGE}"
 
