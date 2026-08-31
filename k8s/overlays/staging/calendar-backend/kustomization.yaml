@@ -1,8 +1,0 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - ../../../services/calendar-backend
-images:
-  - name: calendar-backend
-    newName: mohankatari/calendar-backend
-    newTag: 0af1c5f15d41e104dca19927df4c60898f21df82
