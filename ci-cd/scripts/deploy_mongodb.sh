@@ -18,6 +18,16 @@ fi
 
 kubectl apply -f k8s/bootstrap/namespaces.yaml
 kubectl apply -k "${OVERLAY}"
-kubectl -n "${NS}" rollout status deployment/mongodb --timeout=180s
+
+if ! kubectl -n "${NS}" rollout status deployment/mongodb --timeout=420s; then
+  echo "::group::MongoDB rollout diagnostics"
+  kubectl -n "${NS}" get pods -l app=mongodb -o wide || true
+  kubectl -n "${NS}" describe pods -l app=mongodb || true
+  kubectl -n "${NS}" logs -l app=mongodb --tail=120 --all-containers=true || true
+  echo "::endgroup::"
+  exit 1
+fi
+
+bash ci-cd/scripts/ensure_argocd_application.sh
 echo "MongoDB mode: ${MODE}"
 echo "MongoDB namespace: ${NS}"

@@ -7,6 +7,9 @@ on:
       - k8s/services/calendar-mongodb-legacy/**
       - k8s/overlays/staging/calendar-mongodb/**
       - k8s/overlays/staging/calendar-mongodb-legacy/**
+      - k8s/overlays/staging/kustomization.yaml
+      - k8s/argocd/application.yaml
+      - ci-cd/scripts/ensure_argocd_application.sh
       - k8s/bootstrap/mongodb-pvc.yaml
       - k8s/bootstrap/mongodb-pvc-isolated.yaml
       - ci-cd/scripts/deploy_mongodb.sh

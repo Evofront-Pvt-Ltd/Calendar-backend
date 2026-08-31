@@ -1,11 +1,11 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: calendar-mongodb-staging
+  name: calendar-backend-staging
   namespace: argocd
   labels:
     app.kubernetes.io/part-of: calendar
-    app.kubernetes.io/name: calendar-mongodb
+    app.kubernetes.io/name: calendar-backend
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
@@ -13,7 +13,7 @@ spec:
   source:
     repoURL: https://github.com/Evofront-Pvt-Ltd/Calendar-backend.git
     targetRevision: develop
-    path: k8s/overlays/staging/calendar-mongodb-legacy
+    path: k8s/overlays/staging
   destination:
     server: https://kubernetes.default.svc
     namespace: calendar-backend
@@ -24,3 +24,10 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - RespectIgnoreDifferences=true
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: calendar-backend
+      jsonPointers:
+        - /spec/replicas
+        - /spec/template/spec/containers/0/image

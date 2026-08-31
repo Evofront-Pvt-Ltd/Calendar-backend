@@ -14,6 +14,9 @@ on:
       - ci-cd/scripts/verify_https_health.sh
       - k8s/services/calendar-backend/**
       - k8s/overlays/staging/calendar-backend/**
+      - k8s/overlays/staging/kustomization.yaml
+      - k8s/argocd/application.yaml
+      - ci-cd/scripts/ensure_argocd_application.sh
       - .github/workflows/calendar-backend-ci-cd.yml
   pull_request:
     branches: [develop]

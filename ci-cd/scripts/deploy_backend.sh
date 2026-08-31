@@ -32,6 +32,7 @@ bash ci-cd/scripts/ensure_backend_app_secrets.sh
 source ci-cd/scripts/kubeconfig_env.sh
 setup_kubeconfig
 
+bash ci-cd/scripts/ensure_argocd_application.sh
 kubectl apply -f k8s/bootstrap/namespaces.yaml
 sed -i "s|MONGODB_URL: .*|MONGODB_URL: \"${MONGODB_URL}\"|" k8s/services/calendar-backend/configmap.yaml
 sed -i "s|newName: .*|newName: ${DOCKERHUB_USERNAME}/${IMAGE_NAME}|" "${KUSTOMIZE_FILE}"

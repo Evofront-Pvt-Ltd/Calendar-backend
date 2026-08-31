@@ -104,24 +104,18 @@ kubectl -n calendar-backend create secret generic calendar-backend-secrets `
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-### 5. Register the Argo CD applications
+### 5. Register the Argo CD application
 
 ```powershell
-kubectl apply -f k8s/argocd/calendar-backend-application.yaml
-kubectl apply -f k8s/argocd/calendar-mongodb-application.yaml
+kubectl apply -f k8s/argocd/application.yaml
 ```
 
-Backend app:
+The deploy pipelines also run `ci-cd/scripts/ensure_argocd_application.sh` to keep this app registered.
 
-- Repository: `https://github.com/Evofront-Pvt-Ltd/Calendar-backend.git`
-- Branch: `develop`
-- Path: `k8s/overlays/staging/calendar-backend`
-- Namespace: `calendar-backend`
+Argo CD app `calendar-backend-staging` syncs `k8s/overlays/staging`, which includes both:
 
-MongoDB app (existing PVC in `calendar-backend` uses the legacy overlay path already set in git):
-
-- Path: `k8s/overlays/staging/calendar-mongodb-legacy`
-- Namespace: `calendar-backend`
+- `calendar-backend` (API + ingress)
+- `calendar-mongodb-legacy` (MongoDB with existing PVC)
 
 ### 6. Push to `develop`
 
