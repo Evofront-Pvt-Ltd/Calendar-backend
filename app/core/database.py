@@ -9,7 +9,9 @@ client: AsyncIOMotorClient | None = None
 
 async def connect_to_mongo() -> None:
     global client
-    client = AsyncIOMotorClient(settings.mongodb_url)
+    # tz_aware keeps BSON datetimes UTC-aware on read so they can be compared
+    # with now_utc() instead of raising on naive/aware mismatches.
+    client = AsyncIOMotorClient(settings.mongodb_url, tz_aware=True)
     await client.admin.command("ping")
     await ensure_indexes(get_database())
 

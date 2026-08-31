@@ -9,14 +9,14 @@ password being set.
 from __future__ import annotations
 
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
 
 from app.core.config import settings
 from app.core.database import get_database
-from app.core.utils import now_utc, object_id
+from app.core.utils import as_utc, now_utc, object_id
 from app.services.email import MemberVerifyMessage, email_service
 
 MEMBER_VERIFY_DAYS = 7
@@ -47,7 +47,7 @@ def verification_state(membership: dict[str, Any], user: dict[str, Any] | None =
     if stored in MEMBER_VERIFICATION_STATUSES:
         if stored == "pending":
             expires = membership.get("member_verification_expires_at")
-            if expires is not None and expires < now_utc():
+            if isinstance(expires, datetime) and as_utc(expires) < now_utc():
                 return "expired"
         return stored
     if user is not None and user.get("status") == "active":
@@ -161,7 +161,7 @@ async def verify_member_token(token: str) -> dict[str, Any]:
         }
 
     expires = membership.get("member_verification_expires_at")
-    if expires is not None and expires < now_utc():
+    if isinstance(expires, datetime) and as_utc(expires) < now_utc():
         await db.product_memberships.update_one(
             {"_id": membership["_id"]},
             {"$set": {"member_verification_status": "expired", "updated_at": now_utc()}},
