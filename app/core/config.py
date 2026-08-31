@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 30
     login_max_attempts: int = 10
     login_attempt_window_minutes: int = 15
+    password_reset_expire_minutes: int = 60
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     frontend_url: str = "http://localhost:3000"
     application_base_url: str = "http://127.0.0.1:3000"

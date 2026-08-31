@@ -49,6 +49,9 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.refresh_tokens.create_index("expires_at", expireAfterSeconds=0)
     await db.login_attempts.create_index("email", unique=True)
     await db.login_attempts.create_index("expires_at", expireAfterSeconds=0)
+    await db.password_resets.create_index("token_hash", unique=True)
+    await db.password_resets.create_index("user_id")
+    await db.password_resets.create_index("expires_at", expireAfterSeconds=0)
 
     await db.google_oauth_states.create_index("state_hash", unique=True)
     await db.google_oauth_states.create_index("expires_at", expireAfterSeconds=0)

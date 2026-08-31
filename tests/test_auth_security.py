@@ -14,7 +14,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.services import auth_tokens
+from app.services import auth_tokens, password_resets
 
 
 class FakeCollection:
@@ -32,8 +32,12 @@ class FakeCollection:
         self._next_id += 1
         self.documents.append(document)
 
-    async def find_one(self, query: dict) -> dict | None:
-        return next((doc for doc in self.documents if self._matches(doc, query)), None)
+    async def find_one(self, query: dict, sort: list | None = None) -> dict | None:
+        matches = [doc for doc in self.documents if self._matches(doc, query)]
+        if sort:
+            for key, direction in reversed(sort):
+                matches.sort(key=lambda doc: doc[key], reverse=direction < 0)
+        return matches[0] if matches else None
 
     async def update_one(self, query: dict, update: dict):
         for document in self.documents:
@@ -54,6 +58,7 @@ class FakeCollection:
 class FakeDatabase:
     def __init__(self) -> None:
         self.refresh_tokens = FakeCollection()
+        self.password_resets = FakeCollection()
 
 
 class PasswordHashingTests(unittest.TestCase):
@@ -147,6 +152,62 @@ class RefreshTokenTests(unittest.IsolatedAsyncioTestCase):
         token, _ = await auth_tokens.issue_refresh_token("user-1")
         self.assertTrue(await auth_tokens.revoke_refresh_token(token))
         self.assertIsNone(await auth_tokens.rotate_refresh_token(token))
+
+
+class PasswordResetTokenTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.database = FakeDatabase()
+        self.patcher = patch.object(password_resets, "get_database", return_value=self.database)
+        self.patcher.start()
+        self.addCleanup(self.patcher.stop)
+        self.user = {"_id": "user-1", "email": "person@evofront.com"}
+
+    async def test_issued_token_is_stored_only_as_a_hash(self) -> None:
+        token, _ = await password_resets.issue_password_reset(self.user)
+        stored = self.database.password_resets.documents[0]
+        self.assertNotIn(token, stored.values())
+        self.assertEqual(stored["token_hash"], password_resets.hash_reset_token(token))
+
+    async def test_token_can_be_consumed_once(self) -> None:
+        token, _ = await password_resets.issue_password_reset(self.user)
+        self.assertEqual(await password_resets.consume_password_reset(token), "user-1")
+        self.assertIsNotNone(self.database.password_resets.documents[0]["used_at"])
+
+    async def test_reusing_a_consumed_token_is_rejected(self) -> None:
+        token, _ = await password_resets.issue_password_reset(self.user)
+        await password_resets.consume_password_reset(token)
+        self.assertIsNone(await password_resets.consume_password_reset(token))
+        self.assertIsNone(await password_resets.find_live_reset(token))
+
+    async def test_expired_token_is_rejected(self) -> None:
+        with patch.object(password_resets, "reset_token_lifetime", return_value=timedelta(seconds=-1)):
+            token, _ = await password_resets.issue_password_reset(self.user)
+        self.assertIsNone(await password_resets.find_live_reset(token))
+        self.assertIsNone(await password_resets.consume_password_reset(token))
+
+    async def test_unknown_and_empty_tokens_are_rejected(self) -> None:
+        for value in ["", "   ", "never-issued"]:
+            self.assertIsNone(await password_resets.find_live_reset(value))
+            self.assertIsNone(await password_resets.consume_password_reset(value))
+
+    async def test_issuing_again_invalidates_the_previous_link(self) -> None:
+        first, _ = await password_resets.issue_password_reset(self.user)
+        second, _ = await password_resets.issue_password_reset(self.user)
+        self.assertIsNone(await password_resets.consume_password_reset(first))
+        self.assertEqual(await password_resets.consume_password_reset(second), "user-1")
+
+    async def test_cooldown_reports_a_recent_live_link(self) -> None:
+        self.assertFalse(await password_resets.live_reset_within_cooldown("user-1"))
+        await password_resets.issue_password_reset(self.user)
+        self.assertTrue(await password_resets.live_reset_within_cooldown("user-1"))
+
+    async def test_cooldown_ignores_a_consumed_link(self) -> None:
+        token, _ = await password_resets.issue_password_reset(self.user)
+        await password_resets.consume_password_reset(token)
+        self.assertFalse(await password_resets.live_reset_within_cooldown("user-1"))
+
+    def test_reset_link_points_at_the_frontend_route(self) -> None:
+        self.assertTrue(password_resets.reset_password_link("abc123").endswith("/reset-password/abc123"))
 
 
 class SigningSecretTests(unittest.TestCase):

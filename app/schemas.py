@@ -421,6 +421,35 @@ class LogoutResponse(BaseModel):
     message: str = "Signed out"
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    # Deliberately identical whether or not the address has an account, so the endpoint
+    # cannot be used to discover who is registered.
+    success: bool = True
+    expires_in_minutes: int
+    message: str
+
+
+class PasswordResetTokenCheck(BaseModel):
+    valid: bool
+    email: str = ""
+    expires_in_minutes: int = 0
+    message: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=512)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class ResetPasswordResponse(BaseModel):
+    success: bool = True
+    message: str = "Password updated. Please sign in with your new password."
+
+
 class ProductCreate(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     description: str = Field(default="", max_length=600)

@@ -72,6 +72,14 @@ class EmailVerificationMessage:
     expires_in_minutes: int
 
 
+@dataclass(frozen=True)
+class PasswordResetMessage:
+    email: str
+    name: str
+    reset_link: str
+    expires_in_minutes: int
+
+
 def mask_email(email: str) -> str:
     local, _, domain = str(email).partition("@")
     if not domain:
@@ -160,6 +168,15 @@ class SendGridEmailProvider:
         if result.status not in SENDGRID_ACCEPTED_STATUSES:
             raise EmailProviderError(result.failure_reason or "SendGrid email provider rejected the request")
         logger.info("Verification email accepted by SendGrid for %s", mask_email(message.email))
+        return result
+
+    async def send_password_reset(self, message: PasswordResetMessage) -> SendGridDeliveryResult:
+        if not self.verification_enabled():
+            raise EmailProviderError("SendGrid email verification provider is disabled")
+        result = await self.send_email(self._password_reset_email(message))
+        if result.status not in SENDGRID_ACCEPTED_STATUSES:
+            raise EmailProviderError(result.failure_reason or "SendGrid email provider rejected the request")
+        logger.info("Password reset email accepted by SendGrid for %s", mask_email(message.email))
         return result
 
     async def send_email(self, message: SendGridEmailMessage) -> SendGridDeliveryResult:
@@ -319,6 +336,56 @@ class SendGridEmailProvider:
             dynamic_template_data=template_data,
             categories=["calendar_booking", "email_verification"],
             custom_args={"record_type": "email_verification"},
+        )
+
+    def _password_reset_email(self, message: PasswordResetMessage) -> SendGridEmailMessage:
+        template_id = settings.sendgrid_password_reset_template_id or settings.sendgrid_template_id
+        template_data = {
+            "name": clean_template_value(message.name),
+            "email": normalize_recipient_email(message.email),
+            "reset_link": message.reset_link,
+            "reset_url": message.reset_link,
+            "expires_in_minutes": message.expires_in_minutes,
+            "app_name": settings.sendgrid_from_name or settings.app_name,
+            "company_name": settings.sendgrid_from_name or settings.app_name,
+        }
+        return SendGridEmailMessage(
+            to=[EmailAddress(message.email, message.name)],
+            subject=f"Reset your {settings.sendgrid_from_name} password",
+            text_content=self._password_reset_text(message),
+            html_content=self._password_reset_html(message),
+            template_id=template_id,
+            dynamic_template_data=template_data,
+            categories=["calendar_booking", "password_reset"],
+            custom_args={"record_type": "password_reset"},
+        )
+
+    def _password_reset_text(self, message: PasswordResetMessage) -> str:
+        return (
+            f"Hi {clean_template_value(message.name)},\n\n"
+            f"Use the link below to choose a new {settings.sendgrid_from_name} password.\n"
+            f"{message.reset_link}\n\n"
+            f"The link expires in {message.expires_in_minutes} minutes and can only be used once.\n\n"
+            "If you did not request a password reset, you can ignore this email. "
+            "Your current password stays active."
+        )
+
+    def _password_reset_html(self, message: PasswordResetMessage) -> str:
+        safe_name = html.escape(clean_template_value(message.name))
+        safe_app_name = html.escape(settings.sendgrid_from_name or settings.app_name)
+        safe_link = html.escape(message.reset_link, quote=True)
+        return (
+            '<div style="font-family:Arial,sans-serif;color:#14212f;line-height:1.5">'
+            f"<p>Hi {safe_name},</p>"
+            f"<p>Use the button below to choose a new {safe_app_name} password.</p>"
+            f'<p><a href="{safe_link}" '
+            'style="display:inline-block;padding:12px 22px;background:#006bff;color:#ffffff;'
+            'border-radius:6px;text-decoration:none;font-weight:600">Reset password</a></p>'
+            f"<p>Or paste this link into your browser:<br>{safe_link}</p>"
+            f"<p>The link expires in {message.expires_in_minutes} minutes and can only be used once.</p>"
+            "<p>If you did not request a password reset, you can ignore this email. "
+            "Your current password stays active.</p>"
+            "</div>"
         )
 
     def _verification_text(self, message: EmailVerificationMessage) -> str:

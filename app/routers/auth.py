@@ -1,5 +1,6 @@
 from datetime import timedelta
 from math import ceil
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -18,15 +19,20 @@ from app.core.security import (
 from app.core.utils import as_utc, now_utc, object_id, public_doc, unique_slug
 from app.schemas import (
     AuthResponse,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     LogoutRequest,
     LogoutResponse,
+    PasswordResetTokenCheck,
     RefreshRequest,
     RefreshResponse,
     RegisterRequest,
     RegisterResendRequest,
     RegisterStartResponse,
     RegisterVerifyRequest,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     UserPublic,
 )
 from app.services.auth_tokens import (
@@ -35,8 +41,23 @@ from app.services.auth_tokens import (
     revoke_refresh_token,
     rotate_refresh_token,
 )
-from app.services.sendgrid import EmailProviderError, EmailVerificationMessage, sendgrid_email_provider
+from app.services.password_resets import (
+    consume_password_reset,
+    find_live_reset,
+    issue_password_reset,
+    live_reset_within_cooldown,
+    reset_password_link,
+)
+from app.services.sendgrid import (
+    EmailProviderError,
+    EmailVerificationMessage,
+    PasswordResetMessage,
+    mask_email,
+    sendgrid_email_provider,
+)
 from app.services.scheduling import default_availability, normalize_timezone, timezone_or_400
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 # Google OAuth imports and URLs are parked for future reactivation.
@@ -56,6 +77,15 @@ OTP_MAX_ATTEMPTS = 5
 EMAIL_ALREADY_REGISTERED_MESSAGE = "This email is already registered and verified. Please log in."
 EMAIL_NOT_REGISTERED_MESSAGE = "This email is not registered. Please sign up first."
 PASSWORD_INCORRECT_MESSAGE = "Password is incorrect."
+
+# One wording for every outcome of a reset request, so the response cannot reveal
+# whether the address belongs to an account.
+FORGOT_PASSWORD_MESSAGE = (
+    "If an account exists for that email, a password reset link is on its way. "
+    "Check your inbox, including the spam folder."
+)
+RESET_LINK_INVALID_MESSAGE = "This reset link is invalid or has already been used. Request a new one."
+RESET_LINK_EXPIRED_MESSAGE = "This reset link has expired. Request a new one."
 
 
 def normalize_auth_email(value: str) -> str:
@@ -145,6 +175,30 @@ async def send_registration_otp(email: str, name: str, otp: str) -> str:
     #         detail="Could not send verification email. Check MSG91 email configuration and try again.",
     #     ) from None
     # return "msg91"
+
+
+async def send_password_reset_email(user: dict, token: str) -> None:
+    """Mail a reset link. Never raises: the caller must answer identically either way."""
+    link = reset_password_link(token)
+    expires_in = settings.password_reset_expire_minutes
+    if not sendgrid_email_provider.verification_enabled():
+        # Same console fallback the signup OTP uses, so local setups without SendGrid
+        # can still complete a reset. Guarded so a live token never reaches prod logs.
+        logger.warning("[PASSWORD RESET] email delivery disabled; link for %s: %s", mask_email(user.get("email", "")), link)
+        return
+    try:
+        await sendgrid_email_provider.send_password_reset(
+            PasswordResetMessage(
+                email=str(user.get("email", "")),
+                name=str(user.get("name") or "there"),
+                reset_link=link,
+                expires_in_minutes=expires_in,
+            )
+        )
+    except EmailProviderError as exc:
+        # Surfacing this as an error would turn the endpoint into an account oracle:
+        # a 503 would mean the address exists. Log it instead.
+        logger.error("Password reset email failed for %s: %s", mask_email(user.get("email", "")), exc)
 
 
 def issue_access_token(user_id: str) -> tuple[str, int]:
@@ -550,6 +604,68 @@ async def logout(
     if payload.refresh_token:
         await revoke_refresh_token(payload.refresh_token)
     return LogoutResponse()
+
+
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+async def forgot_password(payload: ForgotPasswordRequest) -> ForgotPasswordResponse:
+    email = normalize_auth_email(payload.email)
+    user = await get_database().users.find_one({"email": email})
+
+    # Every branch below returns the same response. Only the side effect differs.
+    eligible = (
+        user is not None
+        and user_is_registered_and_verified(user)
+        and user.get("status") not in BLOCKED_USER_STATUSES
+    )
+    if eligible and not await live_reset_within_cooldown(str(user["_id"])):
+        token, _ = await issue_password_reset(user)
+        await send_password_reset_email(user, token)
+
+    return ForgotPasswordResponse(
+        expires_in_minutes=settings.password_reset_expire_minutes,
+        message=FORGOT_PASSWORD_MESSAGE,
+    )
+
+
+@router.get("/reset-password/{token}", response_model=PasswordResetTokenCheck)
+async def check_reset_token(token: str) -> PasswordResetTokenCheck:
+    """Let the reset page show whether a link is usable before asking for a password."""
+    record = await find_live_reset(token)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=RESET_LINK_INVALID_MESSAGE)
+    remaining = max(1, ceil((as_utc(record["expires_at"]) - now_utc()).total_seconds() / 60))
+    return PasswordResetTokenCheck(
+        valid=True,
+        # Masked so a leaked link does not also disclose the full address.
+        email=mask_email(str(record.get("email", ""))),
+        expires_in_minutes=remaining,
+        message="Choose a new password to finish signing back in.",
+    )
+
+
+@router.post("/reset-password", response_model=ResetPasswordResponse)
+async def reset_password(payload: ResetPasswordRequest) -> ResetPasswordResponse:
+    user_id = await consume_password_reset(payload.token)
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=RESET_LINK_INVALID_MESSAGE)
+
+    db = get_database()
+    try:
+        user = await db.users.find_one({"_id": object_id(user_id)})
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=RESET_LINK_INVALID_MESSAGE) from None
+    if user is None or user.get("status") in BLOCKED_USER_STATUSES:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=RESET_LINK_INVALID_MESSAGE)
+
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"password_hash": hash_password(payload.password), "updated_at": now_utc()}},
+    )
+    # Whoever knew the old password loses every session, which is the point of a reset.
+    await revoke_all_for_user(user_id)
+    await clear_failed_logins(str(user.get("email", "")))
+    logger.info("Password reset completed for %s", mask_email(str(user.get("email", ""))))
+    return ResetPasswordResponse()
 
 
 # Google OAuth endpoints are parked for future reactivation.
