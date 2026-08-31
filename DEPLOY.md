@@ -21,9 +21,7 @@ Argo CD owns cluster deployment. GitHub Actions does **not** run `kubectl apply`
 | Frontend | `https://calendar.212.2.249.45.nip.io` |
 | Backend API | `https://calendar-api.212.2.249.45.nip.io` |
 
-If the Civo ingress IP changes, update `k8s/services/calendar-backend/configmap.yaml`, `k8s/services/calendar-backend/ingress.yaml`, and the frontend repository build args.
-
-The API HTTPS ingress lives in `k8s/services/calendar-backend/ingress.yaml` (`calendar-api.*.nip.io`). Files under `k8s/registry/` are for an optional private Docker registry host only (`calendar-registry.*.nip.io`), not the application URL.
+If the Civo ingress IP changes, update `k8s/base/configmap.yaml`, `k8s/base/ingress.yaml`, and the frontend repository build args.
 
 ## GitHub repository secrets
 
@@ -48,9 +46,8 @@ Namespaces must exist before secrets and before Argo CD syncs workloads.
 
 ```powershell
 kubectl create namespace calendar-backend --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace calendar-mongodb --dry-run=client -o yaml | kubectl apply -f -
 kubectl create namespace calendar-frontend --dry-run=client -o yaml | kubectl apply -f -
-kubectl get namespace calendar-backend calendar-mongodb calendar-frontend
+kubectl get namespace calendar-backend calendar-frontend
 ```
 
 Expected output: both namespaces show `Active`.
@@ -78,7 +75,7 @@ kubectl -n calendar-backend create secret docker-registry dockerhub-pull `
 
 ### 3. Create MongoDB persistent volume (one-time)
 
-MongoDB storage is **not** managed by Argo CD (PVC storage size cannot be changed after bind). Create it once before the first sync:
+MongoDB storage is **not** managed by Argo CD (PVC size is immutable after bind). Create it once before the first sync:
 
 ```powershell
 kubectl apply -f k8s/bootstrap/mongodb-pvc.yaml
@@ -110,12 +107,12 @@ kubectl -n calendar-backend create secret generic calendar-backend-secrets `
 kubectl apply -f k8s/argocd/application.yaml
 ```
 
-The deploy pipelines also run `ci-cd/scripts/ensure_argocd_application.sh` to keep this app registered.
+Or create the app in the Argo CD UI with:
 
-Argo CD app `calendar-backend-staging` syncs `k8s/overlays/staging`, which includes both:
-
-- `calendar-backend` (API + ingress)
-- `calendar-mongodb-legacy` (MongoDB with existing PVC)
+- Repository: `https://github.com/Evofront-Pvt-Ltd/Calendar-backend.git`
+- Branch: `develop`
+- Path: `k8s/overlays/staging`
+- Namespace: `calendar-backend`
 
 ### 6. Push to `develop`
 

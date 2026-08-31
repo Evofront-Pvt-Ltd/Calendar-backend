@@ -6,8 +6,8 @@ metadata:
   labels:
     app: mongodb
     app.kubernetes.io/part-of: calendar
-    app.kubernetes.io/name: calendar-mongodb
-    app.kubernetes.io/component: database
+    app.kubernetes.io/name: calendar-backend
+    app.kubernetes.io/component: mongodb
 spec:
   accessModes:
     - ReadWriteOnce

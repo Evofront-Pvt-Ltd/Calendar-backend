@@ -1,18 +1,45 @@
 # Calendar Backend CI/CD
 
-See [k8s/SERVICES.md](../k8s/SERVICES.md) for the exact service count and mapping.
+Industrial GitOps deployment aligned with the Surveys pattern:
 
-## This repo
+- **CI:** GitHub Actions validates, builds, and pushes Docker images to Docker Hub
+- **CD:** Argo CD syncs `k8s/overlays/staging` from the `develop` branch
+- **Traceability:** every release is pinned to a Git commit SHA in Kustomize
 
-| Service | Namespace | Workflow |
+See [DEPLOY.md](../DEPLOY.md) for bootstrap, secrets, Argo CD registration, and rollback.
+
+## Workflow
+
+| Job | Trigger | Actions |
 | --- | --- | --- |
-| `calendar-backend` | `calendar-backend` | `calendar-backend-ci-cd.yml` |
-| `calendar-mongodb` | `calendar-mongodb` | `calendar-mongodb-ci-cd.yml` |
+| `ci` | PR and push to `develop` | unittest, docker build, container smoke test |
+| `deploy` | push to `develop` only | push SHA image, kubectl rollout, HTTPS health checks |
 
-Service `calendar-frontend` lives in the Calendar-frontend repository.
+## GitHub secrets
 
-## API HTTPS
+| Secret | Required |
+| --- | --- |
+| `DOCKERHUB_USERNAME` | Yes |
+| `DOCKERHUB_PASSWORD` | Yes |
 
-`k8s/services/calendar-backend/ingress.yaml` opens `https://calendar-api.212.2.249.45.nip.io`.
+## Kubernetes layout
+
+```text
+k8s/
+  base/                 # Namespace, MongoDB, backend deployment, service, ingress
+  overlays/staging/     # Image tag updated by CI
+  argocd/               # Argo CD Application manifest
+  bootstrap/            # Pre-Argo namespace bootstrap (backend + frontend)
+  cluster/              # Optional ClusterIssuer template
+```
+
+## Hostnames
+
+| Surface | URL |
+| --- | --- |
+| Frontend | `https://calendar.212.2.249.45.nip.io` |
+| Backend API | `https://calendar-api.212.2.249.45.nip.io` |
+
+## Branch
 
 Push CI/CD changes to `develop`.
