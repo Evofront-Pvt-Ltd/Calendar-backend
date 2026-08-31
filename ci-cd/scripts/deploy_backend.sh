@@ -7,9 +7,19 @@ set -euo pipefail
 : "${KUBE_CONFIG_DATA:?KUBECONFIG secret is required}"
 : "${API_HEALTH_URL:?API_HEALTH_URL is required}"
 : "${APP_HEALTH_URL:?APP_HEALTH_URL is required}"
+: "${APP_URL:?APP_URL is required}"
 : "${IMAGE_NAME:=calendar-backend}"
 
 REMOTE_TAG="${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${GITHUB_SHA}"
+API_URL="${API_HEALTH_URL%/health}"
+KUSTOMIZE_FILE="k8s/overlays/staging/calendar-backend/kustomization.yaml"
+MODE="$(bash ci-cd/scripts/detect_mongodb_mode.sh)"
+
+if [ "${MODE}" = "legacy" ]; then
+  MONGODB_URL="mongodb://mongodb.calendar-backend.svc.cluster.local:27017"
+else
+  MONGODB_URL="mongodb://mongodb.calendar-mongodb.svc.cluster.local:27017"
+fi
 
 docker build -t "${IMAGE_NAME}:${GITHUB_SHA}" .
 docker tag "${IMAGE_NAME}:${GITHUB_SHA}" "${REMOTE_TAG}"
@@ -17,21 +27,16 @@ docker push "${REMOTE_TAG}"
 docker manifest inspect "${REMOTE_TAG}" >/dev/null
 
 bash ci-cd/scripts/ensure_dockerhub_pull_secret.sh calendar-backend
-bash ci-cd/scripts/ensure_mongodb_pvc.sh
 bash ci-cd/scripts/ensure_backend_app_secrets.sh
 
-# shellcheck source=kubeconfig_env.sh
 source ci-cd/scripts/kubeconfig_env.sh
 setup_kubeconfig
 
-if kubectl -n calendar-backend get deployment mongodb >/dev/null 2>&1; then
-  kubectl -n calendar-backend rollout status deployment/mongodb --timeout=180s
-fi
-
-KUSTOMIZE_FILE="k8s/overlays/staging/kustomization.yaml"
+kubectl apply -f k8s/bootstrap/namespaces.yaml
+sed -i "s|MONGODB_URL: .*|MONGODB_URL: \"${MONGODB_URL}\"|" k8s/services/calendar-backend/configmap.yaml
 sed -i "s|newName: .*|newName: ${DOCKERHUB_USERNAME}/${IMAGE_NAME}|" "${KUSTOMIZE_FILE}"
 sed -i "s/newTag: .*/newTag: ${GITHUB_SHA}/" "${KUSTOMIZE_FILE}"
-kubectl apply -k k8s/overlays/staging
+kubectl apply -k k8s/overlays/staging/calendar-backend
 
 if ! kubectl -n calendar-backend rollout status deployment/calendar-backend --timeout=420s; then
   echo "::group::Backend rollout diagnostics"
@@ -43,3 +48,7 @@ if ! kubectl -n calendar-backend rollout status deployment/calendar-backend --ti
 fi
 
 bash ci-cd/scripts/verify_https_health.sh
+echo "Application URL: ${APP_URL}"
+echo "API URL: ${API_URL}"
+echo "API Health: ${API_HEALTH_URL}"
+echo "MongoDB mode: ${MODE}"

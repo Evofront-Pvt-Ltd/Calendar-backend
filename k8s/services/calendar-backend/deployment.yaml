@@ -44,7 +44,7 @@ spec:
             - sh
             - -c
             - |
-              until nc -z mongodb 27017; do
+              until nc -z mongodb.calendar-mongodb.svc.cluster.local 27017 || nc -z mongodb.calendar-backend.svc.cluster.local 27017; do
                 echo "waiting for mongodb..."
                 sleep 2
               done

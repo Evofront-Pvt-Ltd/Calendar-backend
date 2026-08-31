@@ -2,7 +2,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: calendar-mongodb-data
-  namespace: calendar-backend
+  namespace: calendar-mongodb
   labels:
     app: mongodb
     app.kubernetes.io/part-of: calendar

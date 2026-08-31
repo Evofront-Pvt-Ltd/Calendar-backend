@@ -10,6 +10,15 @@ metadata:
 apiVersion: v1
 kind: Namespace
 metadata:
+  name: calendar-mongodb
+  labels:
+    app.kubernetes.io/part-of: calendar
+    app.kubernetes.io/name: calendar-mongodb
+    app.kubernetes.io/component: mongodb
+---
+apiVersion: v1
+kind: Namespace
+metadata:
   name: calendar-frontend
   labels:
     app.kubernetes.io/part-of: calendar
