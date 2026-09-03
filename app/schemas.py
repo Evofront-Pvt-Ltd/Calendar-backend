@@ -206,7 +206,15 @@ class ClientBookingOut(BaseModel):
     end_time_utc: datetime
     client_timezone: str
     product_timezone: str
-    status: Literal["pending_approval", "scheduled", "cancelled", "rescheduled", "rejected"] = "scheduled"
+    status: Literal[
+        "pending_approval",
+        "awaiting_acceptance",
+        "scheduled",
+        "cancelled",
+        "rescheduled",
+        "rejected",
+        "missed",
+    ] = "scheduled"
     assignment_strategy: str
     assignment_reason: str = ""
     public_booking_reference: str
@@ -558,6 +566,23 @@ class BookingClaimAlertOut(BaseModel):
     end_time: datetime | None = None
     timezone: str = ""
     issue_description: str = ""
+
+
+class MissedCallOut(BaseModel):
+    id: str
+    product_id: str
+    client_name: str = ""
+    client_email: str = ""
+    client_company: str = ""
+    issue_title: str = ""
+    issue_category: str = ""
+    priority: str = ""
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    timezone: str = ""
+    missed_call_at: datetime | None = None
+    missed_call_reason: str = ""
+    status: str = "missed"
 
 
 class PublicBookingClaimOut(BaseModel):

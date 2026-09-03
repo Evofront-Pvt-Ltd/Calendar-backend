@@ -504,7 +504,7 @@ async def build_product_slots(
     bookings = [
         item
         async for item in get_database().client_bookings.find(
-            {"product_id": product_id, "status": {"$in": ["scheduled", "pending_approval"]}},
+            {"product_id": product_id, "status": {"$in": ["scheduled", "pending_approval", "awaiting_acceptance"]}},
             {"assigned_member_id": 1, "start_time_utc": 1, "end_time_utc": 1},
         )
     ]
@@ -822,11 +822,12 @@ async def create_controller_request_notification(
     booking: dict[str, Any],
     member: dict[str, Any],
 ) -> dict[str, Any] | None:
-    from app.services.booking_claims import create_controller_mailbox_notifications, create_shift_claim_alerts
+    from app.services.booking_claims import create_controller_mailbox_notifications
 
     _ = member
+    # Two-step flow: notify verified notification emails only on create.
+    # Team claim alerts are created after release_to_team / approve.
     await create_controller_mailbox_notifications(product, booking)
-    await create_shift_claim_alerts(product, booking)
     return None
 
 
@@ -1102,8 +1103,8 @@ async def assign_client_booking(
     booking = await db.client_bookings.find_one({"_id": booking_oid, "product_id": product_id})
     if booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
-    if booking.get("status") != "pending_approval":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only pending requests can be assigned from this action")
+    if booking.get("status") not in {"pending_approval", "awaiting_acceptance"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only pending or released requests can be assigned from this action")
     member, _membership = await active_support_member_for_product(product_id, member_id)
     timestamp = now_utc()
     previous_member_id = booking.get("assigned_member_id", "")
@@ -1139,6 +1140,65 @@ async def assign_client_booking(
     return booking
 
 
+async def release_client_booking_to_team(
+    product: dict[str, Any],
+    user: dict[str, Any],
+    booking_id: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Controller/notification-email approve step: pending_approval -> awaiting_acceptance + team claim alerts."""
+    from app.services.booking_claims import create_shift_claim_alerts
+
+    try:
+        booking_oid = object_id(booking_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found") from None
+    db = get_database()
+    product_id = str(product["_id"])
+    booking = await db.client_bookings.find_one({"_id": booking_oid, "product_id": product_id})
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    if booking.get("status") == "awaiting_acceptance":
+        return booking
+    if booking.get("status") == "scheduled":
+        return booking
+    if booking.get("status") != "pending_approval":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only pending requests can be released to the team")
+
+    timestamp = now_utc()
+    updates = {
+        "status": "awaiting_acceptance",
+        "released_to_team_by": str(user["_id"]),
+        "released_to_team_at": timestamp,
+        "approved_by": str(user["_id"]),
+        "approved_at": timestamp,
+        "approval_reason": reason.strip() or "Released to team for acceptance",
+        "google_sync_status": "AWAITING_ACCEPTANCE",
+        "updated_at": timestamp,
+    }
+    await db.client_bookings.update_one({"_id": booking["_id"]}, {"$set": updates})
+    booking.update(updates)
+    await create_shift_claim_alerts(product, booking)
+    await db.booking_assignment_history.insert_one(
+        {
+            "booking_id": str(booking["_id"]),
+            "organization_id": product["organization_id"],
+            "product_id": product_id,
+            "previous_product_id": product_id,
+            "new_product_id": product_id,
+            "previous_team_id": product_id,
+            "new_team_id": product_id,
+            "previous_member_id": booking.get("assigned_member_id", ""),
+            "new_member_id": booking.get("assigned_member_id", ""),
+            "changed_by": str(user["_id"]),
+            "reason": updates["approval_reason"],
+            "changed_at": timestamp,
+            "action": "release_to_team",
+        }
+    )
+    return booking
+
+
 async def approve_client_booking(
     product: dict[str, Any],
     user: dict[str, Any],
@@ -1156,8 +1216,11 @@ async def approve_client_booking(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
     if booking.get("status") == "scheduled":
         return booking
-    if booking.get("status") != "pending_approval":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only pending requests can be approved")
+    if booking.get("status") != "awaiting_acceptance":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only requests released to the team can be accepted and scheduled",
+        )
     member_id = booking.get("assigned_member_id", "")
     member, _membership = await active_support_member_for_product(product_id, member_id)
     if settings.google_calendar_enabled:
@@ -1227,12 +1290,15 @@ async def approve_client_booking(
     timestamp = now_utc()
     updates = {
         "status": "scheduled",
-        "approved_by": str(user["_id"]),
-        "approved_at": timestamp,
-        "approval_reason": reason.strip(),
+        "accepted_by": str(user["_id"]),
+        "accepted_at": timestamp,
+        "approval_reason": reason.strip() or booking.get("approval_reason", ""),
         "google_sync_status": booking.get("google_sync_status", "DISABLED") if settings.google_calendar_enabled else "DISABLED",
         "updated_at": timestamp,
     }
+    if not booking.get("approved_by"):
+        updates["approved_by"] = str(user["_id"])
+        updates["approved_at"] = timestamp
     if settings.google_calendar_enabled:
         updates.update(
             {
@@ -1286,8 +1352,8 @@ async def reject_client_booking(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
     if booking.get("status") == "rejected":
         return booking
-    if booking.get("status") != "pending_approval":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only pending requests can be rejected")
+    if booking.get("status") not in {"pending_approval", "awaiting_acceptance"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only pending or released requests can be rejected")
     timestamp = now_utc()
     updates = {
         "status": "rejected",
@@ -1298,7 +1364,150 @@ async def reject_client_booking(
     }
     await db.client_bookings.update_one({"_id": booking["_id"]}, {"$set": updates, "$unset": {"active_slot_key": ""}})
     booking.update(updates)
+    await db.booking_claim_alerts.update_many(
+        {"booking_id": booking_id, "status": "open"},
+        {"$set": {"status": "closed", "claim_token": "", "updated_at": timestamp}},
+    )
+    await _notify_booking_outcome(product, booking, outcome="rejected", reason=reason.strip())
     return booking
+
+
+async def _notify_booking_outcome(
+    product: dict[str, Any],
+    booking: dict[str, Any],
+    *,
+    outcome: str,
+    reason: str = "",
+) -> None:
+    """Email client + verified notification emails for reject or missed-call outcomes."""
+    from app.services.product_controllers import verified_controller_emails
+
+    db = get_database()
+    timestamp = now_utc()
+    product_id = str(product["_id"])
+    booking_id = str(booking["_id"])
+    duration_minutes = int((booking["end_time_utc"] - booking["start_time_utc"]).total_seconds() // 60)
+
+    if outcome == "rejected":
+        client_notes = (
+            "We're sorry — your booking request was not approved"
+            + (f": {reason}" if reason else ".")
+            + " Please choose another time or contact the workspace if you still need support."
+        )
+        client_event_title = f"{product['name']} booking request"
+        notif_type_client = "client_booking_rejected"
+        notif_type_controller = "controller_booking_rejected"
+    else:
+        client_notes = (
+            "We're sorry — no team member was available to accept your session at the scheduled time. "
+            "Please book another slot when you're ready, or contact the workspace for help."
+        )
+        client_event_title = f"{product['name']} session unavailable"
+        notif_type_client = "client_booking_missed"
+        notif_type_controller = "controller_booking_missed"
+
+    client_notification = {
+        "organization_id": product["organization_id"],
+        "product_id": product_id,
+        "booking_id": booking_id,
+        "recipient_user_id": "",
+        "recipient_email": booking["client_email"],
+        "channel": "email",
+        "type": notif_type_client,
+        "status": "PENDING_EMAIL_INTEGRATION",
+        "provider": settings.email_provider if settings.email_enabled else "disabled",
+        "provider_message_id": "",
+        "attempts": 0,
+        "last_attempt_at": None,
+        "sent_at": None,
+        "delivered_at": None,
+        "failed_at": None,
+        "failure_reason": "",
+        "idempotency_key": f"client_booking:{booking_id}:email:{notif_type_client}",
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+    try:
+        result = await db.booking_notifications.insert_one(client_notification)
+        client_notification["_id"] = result.inserted_id
+        delivery = await email_service.send_booking_confirmation(
+            BookingConfirmationMessage(
+                recipient_email=booking["client_email"],
+                recipient_name=booking["client_name"],
+                product_name=product["name"],
+                event_title=client_event_title,
+                organizer_name=f"{product['name']} Support Team",
+                start_time=booking["start_time_utc"],
+                end_time=booking["end_time_utc"],
+                timezone=booking["product_timezone"],
+                location="",
+                meeting_url="",
+                confirmation_link=confirmation_link(booking["secure_token_reference"]),
+                notes=client_notes,
+                pending_approval=False,
+                outcome=outcome,
+                notification_id=str(client_notification["_id"]),
+                idempotency_key=client_notification["idempotency_key"],
+            )
+        )
+        await update_notification_delivery(client_notification, delivery)
+    except DuplicateKeyError:
+        pass
+
+    for email in await verified_controller_emails(product):
+        notification = {
+            "organization_id": product["organization_id"],
+            "product_id": product_id,
+            "booking_id": booking_id,
+            "recipient_user_id": "",
+            "recipient_email": email,
+            "channel": "email",
+            "type": notif_type_controller,
+            "status": "PENDING_EMAIL_INTEGRATION",
+            "provider": settings.email_provider if settings.email_enabled else "disabled",
+            "provider_message_id": "",
+            "attempts": 0,
+            "last_attempt_at": None,
+            "sent_at": None,
+            "delivered_at": None,
+            "failed_at": None,
+            "failure_reason": "",
+            "idempotency_key": f"client_booking:{booking_id}:email:{notif_type_controller}:{email}",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        try:
+            result = await db.booking_notifications.insert_one(notification)
+            notification["_id"] = result.inserted_id
+        except DuplicateKeyError:
+            continue
+        delivery = await email_service.send_booking_notification(
+            BookingNotificationMessage(
+                recipient_email=email,
+                recipient_name=product.get("name", "Workspace"),
+                product_name=product["name"],
+                client_name=booking["client_name"],
+                client_company=booking.get("client_company", ""),
+                issue_category=booking["issue_category"],
+                issue_title=booking["issue_title"],
+                issue_description=booking.get("issue_description", "") or reason,
+                priority=booking["priority"],
+                start_time=booking["start_time_utc"],
+                end_time=booking["end_time_utc"],
+                timezone=booking["product_timezone"],
+                duration_minutes=duration_minutes,
+                booking_link=confirmation_link(booking["secure_token_reference"]),
+                client_phone=booking.get("client_phone", ""),
+                product_reference_number=booking.get("product_reference_number", ""),
+                meeting_url="",
+                booking_status=outcome,
+                source_domain=str(booking.get("source_domain") or ""),
+                reply_to_email=booking["client_email"] if settings.booking_reply_to_enabled else "",
+                notification_id=str(notification["_id"]),
+                idempotency_key=notification["idempotency_key"],
+            )
+        )
+        await update_notification_delivery(notification, delivery)
 
 
 async def client_booking_to_out(booking: dict[str, Any]) -> dict[str, Any]:
@@ -1382,7 +1591,7 @@ async def team_availability_context(product: dict[str, Any], user: dict[str, Any
             {
                 "product_id": str(product["_id"]),
                 "$or": [
-                    {"status": "pending_approval"},
+                    {"status": {"$in": ["pending_approval", "awaiting_acceptance"]}},
                     {"start_time_utc": {"$gte": day_start}},
                 ],
             }
@@ -1390,7 +1599,7 @@ async def team_availability_context(product: dict[str, Any], user: dict[str, Any
     ]
     raw_bookings.sort(
         key=lambda item: (
-            0 if item.get("status") == "pending_approval" else 1,
+            0 if item.get("status") in {"pending_approval", "awaiting_acceptance"} else 1,
             as_utc(item["start_time_utc"]),
         )
     )

@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+import asyncio
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,10 @@ from app.routers import (
     widget,
 )
 
+logger = logging.getLogger(__name__)
+
+MISSED_CALL_SCAN_INTERVAL_SECONDS = 60
+
 
 def verify_signing_secret() -> None:
     if settings.environment.lower() in {"development", "test", "local"}:
@@ -30,12 +36,35 @@ def verify_signing_secret() -> None:
         )
 
 
+async def _missed_call_scan_loop() -> None:
+    from app.services.booking_claims import scan_all_missed_calls
+
+    while True:
+        try:
+            marked = await scan_all_missed_calls()
+            if marked:
+                logger.info("Missed-call scan marked %s booking(s)", marked)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Missed-call scan failed")
+        await asyncio.sleep(MISSED_CALL_SCAN_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     verify_signing_secret()
     await connect_to_mongo()
-    yield
-    await close_mongo_connection()
+    scan_task = asyncio.create_task(_missed_call_scan_loop(), name="missed-call-scan")
+    try:
+        yield
+    finally:
+        scan_task.cancel()
+        try:
+            await scan_task
+        except asyncio.CancelledError:
+            pass
+        await close_mongo_connection()
 
 
 app = FastAPI(title=settings.app_name, version="1.0.0", lifespan=lifespan)

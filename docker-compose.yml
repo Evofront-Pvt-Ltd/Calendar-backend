@@ -21,7 +21,7 @@ services:
       ENVIRONMENT: docker
       MONGODB_URL: mongodb://mongodb:27017
       MONGODB_DB: calendar_booking
-      JWT_SECRET: local-docker-secret-change-before-production
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a random value of at least 32 characters}
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       FRONTEND_URL: http://127.0.0.1:3000
       APPLICATION_BASE_URL: ${APPLICATION_BASE_URL:-http://127.0.0.1:3000}

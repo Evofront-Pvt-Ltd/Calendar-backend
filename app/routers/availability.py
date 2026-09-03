@@ -24,7 +24,7 @@ from app.schemas import (
 )
 from app.services.product_availability import (
     audit_availability,
-    approve_client_booking,
+    release_client_booking_to_team,
     assign_client_booking,
     cancel_client_booking,
     client_booking_to_out,
@@ -322,8 +322,9 @@ async def approve_product_client_booking(
     product_id: str = Query(),
     user: dict = Depends(get_current_user),
 ) -> ClientBookingOut:
+    """Release a pending request to the team (awaiting_acceptance + claim alerts). Scheduling happens on claim."""
     context = await product_context(user, product_id, "manage_availability", require_active=True)
-    booking = await approve_client_booking(context.product, user, booking_id, reason=payload.reason)
+    booking = await release_client_booking_to_team(context.product, user, booking_id, reason=payload.reason)
     return ClientBookingOut(**await client_booking_to_out(booking))
 
 

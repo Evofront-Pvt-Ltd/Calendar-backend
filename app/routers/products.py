@@ -27,6 +27,7 @@ from app.schemas import (
     MeetingCreate,
     MeetingInvitationOut,
     MeetingOut,
+    MissedCallOut,
     ProductControllerCreate,
     ProductControllerOut,
     ProductCreate,
@@ -44,7 +45,12 @@ from app.services.product_controllers import (
     resend_by_id,
     revoke_controller,
 )
-from app.services.booking_claims import claim_booking_as_user, list_open_claim_alerts_for_user
+from app.services.booking_claims import (
+    claim_booking_as_user,
+    list_missed_calls_for_product,
+    list_open_claim_alerts_for_user,
+    scan_missed_calls_for_product,
+)
 from app.services.product_members import (
     new_verification_payload,
     resend_member_verification,
@@ -265,6 +271,39 @@ async def delete_product_controller(
 async def get_claim_alerts(product_id: str, user: dict = Depends(get_current_user)) -> list[BookingClaimAlertOut]:
     await product_context(user, product_id, "view_product")
     return [BookingClaimAlertOut(**item) for item in await list_open_claim_alerts_for_user(product_id, user)]
+
+
+@router.get("/{product_id}/missed-calls", response_model=list[MissedCallOut])
+async def get_missed_calls(product_id: str, user: dict = Depends(get_current_user)) -> list[MissedCallOut]:
+    await product_context(user, product_id, "view_product")
+    return [MissedCallOut(**item) for item in await list_missed_calls_for_product(product_id)]
+
+
+@router.post("/{product_id}/missed-calls/scan", response_model=list[MissedCallOut])
+async def scan_product_missed_calls(product_id: str, user: dict = Depends(get_current_user)) -> list[MissedCallOut]:
+    context = await product_context(user, product_id, "manage_availability", require_active=False)
+    marked = await scan_missed_calls_for_product(context.product)
+    return [
+        MissedCallOut(
+            **{
+                "id": str(item["_id"]),
+                "product_id": item.get("product_id", ""),
+                "client_name": item.get("client_name", ""),
+                "client_email": item.get("client_email", ""),
+                "client_company": item.get("client_company", ""),
+                "issue_title": item.get("issue_title", ""),
+                "issue_category": item.get("issue_category", ""),
+                "priority": item.get("priority", ""),
+                "start_time": item.get("start_time_utc"),
+                "end_time": item.get("end_time_utc"),
+                "timezone": item.get("product_timezone", ""),
+                "missed_call_at": item.get("missed_call_at"),
+                "missed_call_reason": item.get("missed_call_reason", ""),
+                "status": "missed",
+            }
+        )
+        for item in marked
+    ]
 
 
 @router.post("/{product_id}/bookings/{booking_id}/claim", response_model=ClientBookingOut)

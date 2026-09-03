@@ -6,8 +6,8 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
 from app.core.database import get_database
-from app.core.widget import request_widget_origin
-from app.core.products import ensure_public_booking_token
+from app.core.widget import approved_widget_origins, request_widget_origin
+from app.core.products import ensure_public_booking_token, normalize_workspace_domain
 from app.core.utils import as_utc, now_utc, object_id, public_doc
 from app.schemas import (
     AvailableSlotOut,
@@ -114,13 +114,20 @@ async def public_product_booking(booking_token: str) -> PublicProductBookingOut:
 
 
 @router.get("/products", response_model=list[PublicLandingProductOut])
-async def public_landing_products() -> list[PublicLandingProductOut]:
+async def public_landing_products(
+    origin: str | None = Query(default=None, description="Website origin to match against approved_domains"),
+) -> list[PublicLandingProductOut]:
     db = get_database()
     query: dict[str, str] = {"status": "active"}
     if settings.organization_id:
         query["organization_id"] = settings.organization_id
+    normalized_origin = normalize_workspace_domain(origin) if origin else ""
     products: list[PublicLandingProductOut] = []
     async for product in db.products.find(query).sort("name", 1):
+        if normalized_origin:
+            approved = approved_widget_origins(product)
+            if normalized_origin not in approved:
+                continue
         policy = await ensure_policy(product)
         token = await ensure_public_booking_token(product)
         products.append(

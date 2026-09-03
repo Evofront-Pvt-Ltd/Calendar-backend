@@ -313,7 +313,7 @@ async def create_shift_claim_alerts(product: dict[str, Any], booking: dict[str, 
                 client_phone=booking.get("client_phone", ""),
                 product_reference_number=booking.get("product_reference_number", ""),
                 meeting_url="",
-                booking_status="pending_approval",
+                booking_status="awaiting_acceptance",
                 source_domain=str(booking.get("source_domain") or ""),
                 reply_to_email=booking["client_email"] if settings.booking_reply_to_enabled else "",
                 notification_id=str(email_notification["_id"]),
@@ -342,7 +342,7 @@ async def list_open_claim_alerts_for_user(product_id: str, user: dict[str, Any])
             booking = await db.client_bookings.find_one({"_id": object_id(alert["booking_id"])})
         except ValueError:
             booking = None
-        if booking is None or booking.get("status") != "pending_approval":
+        if booking is None or booking.get("status") != "awaiting_acceptance":
             continue
         results.append(
             {
@@ -409,8 +409,11 @@ async def claim_booking_as_user(product: dict[str, Any], user: dict[str, Any], b
     booking = await db.client_bookings.find_one({"_id": booking_oid, "product_id": product_id})
     if booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
-    if booking.get("status") != "pending_approval":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This request was already accepted or closed")
+    if booking.get("status") != "awaiting_acceptance":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This request is not open for team acceptance yet, or was already accepted or closed",
+        )
 
     alert = await db.booking_claim_alerts.find_one(
         {
@@ -420,7 +423,7 @@ async def claim_booking_as_user(product: dict[str, Any], user: dict[str, Any], b
             "status": "open",
         }
     )
-    # Controllers with manage_availability can claim even without a personal alert (backup Approve path stays).
+    # Controllers with manage_availability can claim even without a personal alert.
     membership = await db.product_memberships.find_one(
         {"product_id": product_id, "user_id": str(user["_id"]), "status": "active"}
     )
@@ -432,7 +435,7 @@ async def claim_booking_as_user(product: dict[str, Any], user: dict[str, Any], b
     lock_result = await db.client_bookings.update_one(
         {
             "_id": booking_oid,
-            "status": "pending_approval",
+            "status": "awaiting_acceptance",
             "$or": [
                 {"claim_locked_by": {"$exists": False}},
                 {"claim_locked_by": ""},
@@ -447,7 +450,7 @@ async def claim_booking_as_user(product: dict[str, Any], user: dict[str, Any], b
             }
         },
     )
-    # matched_count is the win signal: the filter demands an unlocked pending booking,
+    # matched_count is the win signal: the filter demands an unlocked awaiting booking,
     # so a match means this caller set the lock. modified_count would be ambiguous.
     if lock_result.matched_count == 0:
         raise HTTPException(
@@ -463,7 +466,7 @@ async def claim_booking_as_user(product: dict[str, Any], user: dict[str, Any], b
         # Release the lock, otherwise a failed accept (calendar outage, transient
         # error) would leave the booking permanently unclaimable by anyone.
         await db.client_bookings.update_one(
-            {"_id": booking_oid, "claim_locked_by": member_id, "status": "pending_approval"},
+            {"_id": booking_oid, "claim_locked_by": member_id, "status": "awaiting_acceptance"},
             {"$set": {"claim_locked_by": "", "claim_locked_at": None, "updated_at": now_utc()}},
         )
         raise
@@ -592,6 +595,113 @@ async def public_claim_preview(token: str) -> dict[str, Any]:
         "end_time": booking.get("end_time_utc"),
         "timezone": booking.get("product_timezone", ""),
         "can_accept": (
-            alert.get("status") == "open" and booking.get("status") == "pending_approval" and not expired
+            alert.get("status") == "open" and booking.get("status") == "awaiting_acceptance" and not expired
         ),
     }
+
+
+async def mark_booking_missed(product: dict[str, Any], booking: dict[str, Any], reason: str = "no_accept_before_slot") -> dict[str, Any]:
+    """Mark an unaccepted booking as missed and notify client + notification emails."""
+    from app.services.product_availability import _notify_booking_outcome
+
+    db = get_database()
+    booking_id = str(booking["_id"])
+    timestamp = now_utc()
+    if booking.get("status") == "missed":
+        return booking
+    updates = {
+        "status": "missed",
+        "missed_call_at": timestamp,
+        "missed_call_reason": reason,
+        "updated_at": timestamp,
+    }
+    result = await db.client_bookings.update_one(
+        {
+            "_id": booking["_id"],
+            "status": {"$in": ["awaiting_acceptance", "pending_approval"]},
+            "$or": [
+                {"claim_locked_by": {"$exists": False}},
+                {"claim_locked_by": ""},
+                {"claim_locked_by": None},
+            ],
+        },
+        {"$set": updates, "$unset": {"active_slot_key": ""}},
+    )
+    if result.matched_count == 0:
+        refreshed = await db.client_bookings.find_one({"_id": booking["_id"]})
+        return refreshed or booking
+    booking.update(updates)
+    await db.booking_claim_alerts.update_many(
+        {"booking_id": booking_id, "status": "open"},
+        {"$set": {"status": "closed", "claim_token": "", "updated_at": timestamp}},
+    )
+    await db.booking_notifications.update_many(
+        {"booking_id": booking_id, "type": "booking_claim_alert", "channel": "in_app", "status": "UNREAD"},
+        {"$set": {"status": "READ", "updated_at": timestamp}},
+    )
+    await _notify_booking_outcome(product, booking, outcome="missed", reason=reason)
+    return booking
+
+
+async def scan_missed_calls_for_product(product: dict[str, Any]) -> list[dict[str, Any]]:
+    """Find awaiting/pending bookings whose slot has started with no claim lock, mark missed."""
+    db = get_database()
+    product_id = str(product["_id"])
+    now = now_utc()
+    candidates = [
+        item
+        async for item in db.client_bookings.find(
+            {
+                "product_id": product_id,
+                "status": {"$in": ["awaiting_acceptance", "pending_approval"]},
+                "start_time_utc": {"$lte": now},
+                "$or": [
+                    {"claim_locked_by": {"$exists": False}},
+                    {"claim_locked_by": ""},
+                    {"claim_locked_by": None},
+                ],
+            }
+        )
+    ]
+    marked: list[dict[str, Any]] = []
+    for booking in candidates:
+        updated = await mark_booking_missed(product, booking, reason="no_accept_before_slot")
+        if updated.get("status") == "missed":
+            marked.append(updated)
+    return marked
+
+
+async def scan_all_missed_calls() -> int:
+    db = get_database()
+    count = 0
+    async for product in db.products.find({"status": {"$ne": "deleted"}}):
+        marked = await scan_missed_calls_for_product(product)
+        count += len(marked)
+    return count
+
+
+async def list_missed_calls_for_product(product_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    db = get_database()
+    results: list[dict[str, Any]] = []
+    async for booking in (
+        db.client_bookings.find({"product_id": product_id, "status": "missed"}).sort("missed_call_at", -1).limit(limit)
+    ):
+        results.append(
+            {
+                "id": str(booking["_id"]),
+                "product_id": booking.get("product_id", ""),
+                "client_name": booking.get("client_name", ""),
+                "client_email": booking.get("client_email", ""),
+                "client_company": booking.get("client_company", ""),
+                "issue_title": booking.get("issue_title", ""),
+                "issue_category": booking.get("issue_category", ""),
+                "priority": booking.get("priority", ""),
+                "start_time": booking.get("start_time_utc"),
+                "end_time": booking.get("end_time_utc"),
+                "timezone": booking.get("product_timezone", ""),
+                "missed_call_at": booking.get("missed_call_at"),
+                "missed_call_reason": booking.get("missed_call_reason", ""),
+                "status": "missed",
+            }
+        )
+    return results

@@ -71,6 +71,7 @@ class BookingConfirmationMessage:
     confirmation_link: str
     notes: str = ""
     pending_approval: bool = False
+    outcome: str = ""
     notification_id: str = ""
     idempotency_key: str = ""
 
@@ -333,11 +334,23 @@ class SendGridInvitationProvider(EmailProvider):
     def _booking_email(self, message: BookingNotificationMessage) -> SendGridEmailMessage:
         when = display_window(message.start_time, message.end_time, message.timezone)
         category = message.issue_category.lower()
-        is_request = message.booking_status == "pending_approval"
+        is_request = message.booking_status in {"pending_approval", "awaiting_acceptance"}
+        is_missed = message.booking_status == "missed"
+        is_rejected = message.booking_status == "rejected"
         if category == "team connection":
-            booking_kind = "team connection request" if is_request else "team connection booking"
+            if is_missed:
+                booking_kind = "missed team connection"
+            elif is_rejected:
+                booking_kind = "rejected team connection request"
+            else:
+                booking_kind = "team connection request" if is_request else "team connection booking"
         else:
-            booking_kind = "support booking request" if is_request else "support booking"
+            if is_missed:
+                booking_kind = "missed support session"
+            elif is_rejected:
+                booking_kind = "rejected support request"
+            else:
+                booking_kind = "support booking request" if is_request else "support booking"
         template_data = {
             "recipient_name": clean_template_value(message.recipient_name or message.recipient_email),
             "product_name": clean_template_value(message.product_name),
@@ -376,6 +389,7 @@ class SendGridInvitationProvider(EmailProvider):
 
     def _booking_confirmation_email(self, message: BookingConfirmationMessage) -> SendGridEmailMessage:
         when = display_window(message.start_time, message.end_time, message.timezone)
+        outcome = (message.outcome or ("pending" if message.pending_approval else "confirmed")).lower()
         template_data = {
             "recipient_name": clean_template_value(message.recipient_name or message.recipient_email),
             "product_name": clean_template_value(message.product_name),
@@ -388,12 +402,16 @@ class SendGridInvitationProvider(EmailProvider):
             "confirmation_link": message.confirmation_link,
             "notes": clean_template_value(message.notes),
             "app_name": settings.sendgrid_from_name or settings.app_name,
+            "outcome": outcome,
         }
-        subject = (
-            f"Booking request received: {message.event_title}"
-            if message.pending_approval
-            else f"Booking confirmed: {message.event_title}"
-        )
+        if outcome == "rejected":
+            subject = f"Booking request not approved: {message.event_title}"
+        elif outcome == "missed":
+            subject = f"No team available: {message.event_title}"
+        elif outcome == "pending" or message.pending_approval:
+            subject = f"Booking request received: {message.event_title}"
+        else:
+            subject = f"Booking confirmed: {message.event_title}"
         return SendGridEmailMessage(
             to=[EmailAddress(message.recipient_email, message.recipient_name)],
             subject=subject,
@@ -455,7 +473,11 @@ class SendGridInvitationProvider(EmailProvider):
             "",
             (
                 f"You have a new booking request for {message.product_name}."
-                if message.booking_status == "pending_approval"
+                if message.booking_status in {"pending_approval", "awaiting_acceptance"}
+                else f"You have a missed call alert for {message.product_name}."
+                if message.booking_status == "missed"
+                else f"A booking request was rejected for {message.product_name}."
+                if message.booking_status == "rejected"
                 else f"You have a new support booking for {message.product_name}."
             ),
             f"Client: {message.client_name}",
@@ -493,7 +515,11 @@ class SendGridInvitationProvider(EmailProvider):
             f"<p>Hi {html.escape(message.recipient_name or message.recipient_email)},</p>",
             (
                 f"<p>You have a new booking request for <strong>{html.escape(message.product_name)}</strong>.</p>"
-                if message.booking_status == "pending_approval"
+                if message.booking_status in {"pending_approval", "awaiting_acceptance"}
+                else f"<p>You have a missed call alert for <strong>{html.escape(message.product_name)}</strong>.</p>"
+                if message.booking_status == "missed"
+                else f"<p>A booking request was rejected for <strong>{html.escape(message.product_name)}</strong>.</p>"
+                if message.booking_status == "rejected"
                 else f"<p>You have a new support booking for <strong>{html.escape(message.product_name)}</strong>.</p>"
             ),
             f"<p><strong>Client:</strong> {html.escape(message.client_name)}</p>",
@@ -529,14 +555,19 @@ class SendGridInvitationProvider(EmailProvider):
 
     @staticmethod
     def booking_confirmation_plain_text(message: BookingConfirmationMessage, when: str) -> str:
+        outcome = (message.outcome or ("pending" if message.pending_approval else "confirmed")).lower()
+        if outcome == "rejected":
+            lead = f"Your booking request was not approved for {message.event_title}."
+        elif outcome == "missed":
+            lead = f"No team member was available for {message.event_title}."
+        elif outcome == "pending" or message.pending_approval:
+            lead = f"Your booking request was received for {message.event_title}."
+        else:
+            lead = f"Your booking is confirmed for {message.event_title}."
         parts = [
             f"Hi {message.recipient_name or message.recipient_email},",
             "",
-            (
-                f"Your booking request was received for {message.event_title}."
-                if message.pending_approval
-                else f"Your booking is confirmed for {message.event_title}."
-            ),
+            lead,
             f"Product/team: {message.product_name}",
             f"When: {when}",
         ]
@@ -554,14 +585,19 @@ class SendGridInvitationProvider(EmailProvider):
 
     @staticmethod
     def booking_confirmation_html(message: BookingConfirmationMessage, when: str) -> str:
+        outcome = (message.outcome or ("pending" if message.pending_approval else "confirmed")).lower()
+        if outcome == "rejected":
+            lead = f"<p>Your booking request was not approved for <strong>{html.escape(message.event_title)}</strong>.</p>"
+        elif outcome == "missed":
+            lead = f"<p>No team member was available for <strong>{html.escape(message.event_title)}</strong>.</p>"
+        elif outcome == "pending" or message.pending_approval:
+            lead = f"<p>Your booking request was received for <strong>{html.escape(message.event_title)}</strong>.</p>"
+        else:
+            lead = f"<p>Your booking is confirmed for <strong>{html.escape(message.event_title)}</strong>.</p>"
         body = [
             '<div style="font-family:Arial,sans-serif;color:#14212f;line-height:1.5">',
             f"<p>Hi {html.escape(message.recipient_name or message.recipient_email)},</p>",
-            (
-                f"<p>Your booking request was received for <strong>{html.escape(message.event_title)}</strong>.</p>"
-                if message.pending_approval
-                else f"<p>Your booking is confirmed for <strong>{html.escape(message.event_title)}</strong>.</p>"
-            ),
+            lead,
             f"<p><strong>Product/team:</strong> {html.escape(message.product_name)}</p>",
             f"<p><strong>When:</strong> {html.escape(when)}</p>",
         ]

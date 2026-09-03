@@ -31,7 +31,7 @@ async def dashboard_stats(
         {"product_id": product_id, "email_delivery_status": "PENDING_EMAIL_INTEGRATION"}
     )
     pending_client_bookings = await db.client_bookings.count_documents(
-        {"product_id": product_id, "status": "pending_approval"}
+        {"product_id": product_id, "status": {"$in": ["pending_approval", "awaiting_acceptance"]}}
     )
     return {
         "event_types": total_event_types,
