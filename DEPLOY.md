@@ -78,7 +78,6 @@ kubectl -n calendar-backend create secret docker-registry dockerhub-pull `
 MongoDB storage is **not** managed by Argo CD (PVC size is immutable after bind). Create it once before the first sync:
 
 ```powershell
-kubectl apply -f k8s/bootstrap/mongodb-pvc.yaml
 kubectl -n calendar-backend annotate pvc calendar-mongodb-data `
   argocd.argoproj.io/sync-options=Delete=false --overwrite
 kubectl -n calendar-backend label pvc calendar-mongodb-data `
