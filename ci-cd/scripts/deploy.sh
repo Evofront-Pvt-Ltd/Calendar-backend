@@ -17,16 +17,11 @@ docker push "${REMOTE_TAG}"
 docker manifest inspect "${REMOTE_TAG}" >/dev/null
 
 bash ci-cd/scripts/ensure_dockerhub_pull_secret.sh calendar-backend
-bash ci-cd/scripts/ensure_mongodb_pvc.sh
 bash ci-cd/scripts/ensure_backend_app_secrets.sh
 
 # shellcheck source=kubeconfig_env.sh
 source ci-cd/scripts/kubeconfig_env.sh
 setup_kubeconfig
-
-if kubectl -n calendar-backend get deployment mongodb >/dev/null 2>&1; then
-  kubectl -n calendar-backend rollout status deployment/mongodb --timeout=180s
-fi
 
 KUSTOMIZE_FILE="k8s/overlays/staging/kustomization.yaml"
 sed -i "s|newName: .*|newName: ${DOCKERHUB_USERNAME}/${IMAGE_NAME}|" "${KUSTOMIZE_FILE}"
