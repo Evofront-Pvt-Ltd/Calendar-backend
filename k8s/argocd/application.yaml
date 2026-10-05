@@ -18,16 +18,5 @@ spec:
     server: https://kubernetes.default.svc
     namespace: calendar-backend
   syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - RespectIgnoreDifferences=true
-  ignoreDifferences:
-    - group: apps
-      kind: Deployment
-      name: calendar-backend
-      jsonPointers:
-        - /spec/replicas
-        - /spec/template/spec/containers/0/image

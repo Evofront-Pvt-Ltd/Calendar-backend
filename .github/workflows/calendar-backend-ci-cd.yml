@@ -2,13 +2,11 @@ name: Calendar Backend CI/CD
 on:
   push:
     branches: [develop]
-    paths: &paths [app/**, tests/**, requirements.txt, Dockerfile, .dockerignore, ci-cd/**, k8s/**, .github/workflows/calendar-backend-ci-cd.yml]
   pull_request:
     branches: [develop]
-    paths: *paths
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: calendar-backend-${{ github.ref }}
   cancel-in-progress: false
@@ -23,6 +21,7 @@ env:
   DOCKER_BUILD_RECORD_UPLOAD: "false"
 jobs:
   ci:
+    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -36,7 +35,9 @@ jobs:
       - run: bash ci-cd/scripts/validate_container.sh "${IMAGE_NAME}:${GITHUB_SHA}"
   deploy:
     needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.actor != 'github-actions[bot]')
+      || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -57,24 +58,13 @@ jobs:
       - run: bash ci-cd/scripts/deploy.sh
   urls:
     needs: deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    if: always() && needs.deploy.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Print deployment URLs
         run: |
-          INGRESS_IP="$(printf '%s\n' "${APP_URL#https://}" | sed -E 's/^[^.]+\.([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.nip\.io.*/\1/')"
-          echo "========================================"
-          echo "DEPLOYMENT COMPLETED"
-          echo "========================================"
-          echo ""
-          echo "Application URL:"
-          echo "${APP_URL}"
-          echo ""
-          echo "API URL:"
-          echo "${API_URL}"
-          echo ""
-          echo "Ingress IP:"
-          echo "${INGRESS_IP}"
-          echo ""
-          echo "========================================"
+          echo "Application URL: ${APP_URL}"
+          echo "API URL: ${API_URL}"
+          echo "Image tag: ${GITHUB_SHA}"
+          echo "Argo CD app: calendar-backend-staging — sync when this SHA commit is visible"
