@@ -19,6 +19,7 @@ docker manifest inspect "${REMOTE_TAG}" >/dev/null
 if [[ -n "${KUBE_CONFIG_DATA:-}" ]]; then
   bash ci-cd/scripts/ensure_dockerhub_pull_secret.sh calendar-backend
   bash ci-cd/scripts/ensure_backend_app_secrets.sh
+  bash ci-cd/scripts/relieve_disk_pressure.sh || true
 fi
 
 bash ci-cd/scripts/commit_sha_manifest.sh

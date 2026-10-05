@@ -11,7 +11,7 @@ for _ in $(seq 1 30); do
   sleep 10
 done
 if [ "${api_ok}" != "1" ]; then
-  echo "::error::API HTTPS health check failed: ${API_HEALTH_URL}"
+  echo "API HTTPS health check failed: ${API_HEALTH_URL}"
   exit 1
 fi
 echo "API HTTPS health OK: ${API_HEALTH_URL}"
@@ -26,7 +26,7 @@ for _ in $(seq 1 30); do
   sleep 10
 done
 if [ "${app_ok}" != "1" ]; then
-  echo "::error::App HTTPS health check failed: ${APP_HEALTH_URL} (HTTP ${code:-000})"
+  echo "App HTTPS health check failed: ${APP_HEALTH_URL} (HTTP ${code:-000})"
   exit 1
 fi
 echo "App HTTPS health OK: ${APP_HEALTH_URL}"

@@ -41,14 +41,14 @@ if kubectl -n calendar-backend get secret calendar-backend-secrets >/dev/null 2>
   echo "Updated calendar-backend-secrets in namespace calendar-backend"
 
   if [ -z "${SENDGRID_API_KEY_VALUE}" ]; then
-    echo "::warning::SENDGRID_API_KEY is empty. Signup verification emails will fail with HTTP 503 because EMAIL_ENABLED is true. Set CALENDAR_SENDGRID_API_KEY in GitHub Actions secrets."
+    echo "SENDGRID_API_KEY is empty. Set CALENDAR_SENDGRID_API_KEY in GitHub Actions secrets."
   fi
   exit 0
 fi
 
 if [ -z "${CALENDAR_JWT_SECRET:-}" ]; then
   CALENDAR_JWT_SECRET="$(generate_jwt_secret)"
-  echo "::warning::CALENDAR_JWT_SECRET is not set in GitHub. Created a bootstrap JWT secret in the cluster for staging. Add CALENDAR_JWT_SECRET in GitHub Actions secrets and re-run deploy to pin a stable value."
+  echo "CALENDAR_JWT_SECRET is not set in GitHub. Created a bootstrap JWT secret in the cluster for staging."
 fi
 
 kubectl -n calendar-backend create secret generic calendar-backend-secrets \
@@ -62,5 +62,5 @@ kubectl -n calendar-backend create secret generic calendar-backend-secrets \
 echo "Ensured calendar-backend-secrets in namespace calendar-backend"
 
 if [ -z "${CALENDAR_SENDGRID_API_KEY:-}" ]; then
-  echo "::warning::SENDGRID_API_KEY is empty. Signup verification emails will fail with HTTP 503 because EMAIL_ENABLED is true. Set CALENDAR_SENDGRID_API_KEY in GitHub Actions secrets."
+  echo "SENDGRID_API_KEY is empty. Set CALENDAR_SENDGRID_API_KEY in GitHub Actions secrets."
 fi

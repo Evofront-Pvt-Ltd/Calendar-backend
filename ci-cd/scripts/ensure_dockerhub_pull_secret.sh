@@ -12,7 +12,7 @@ if [ -z "${KUBE_CONFIG_DATA:-}" ]; then
 fi
 
 if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_PASSWORD:-}" ]; then
-  echo "::error::DOCKERHUB_USERNAME and DOCKERHUB_PASSWORD are required for pull-secret bootstrap" >&2
+  echo "DOCKERHUB_USERNAME and DOCKERHUB_PASSWORD are required for pull-secret bootstrap" >&2
   exit 1
 fi
 

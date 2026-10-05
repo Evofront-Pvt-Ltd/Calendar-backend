@@ -23,7 +23,7 @@ for _ in $(seq 1 30); do
 done
 
 if [ "${mongo_ready}" != "1" ]; then
-  echo "::error::MongoDB sidecar did not become ready"
+  echo "MongoDB sidecar did not become ready"
   docker logs calendar-mongo-validate
   exit 1
 fi
@@ -50,13 +50,13 @@ for _ in $(seq 1 40); do
 done
 
 if [ "${ready}" != "1" ]; then
-  echo "::error::Backend container did not serve GET /health"
+  echo "Backend container did not serve GET /health"
   docker logs calendar-backend-validate
   exit 1
 fi
 
 if ! curl -fsS --max-time 5 http://127.0.0.1:8000/ | grep -q '"status":"ok"'; then
-  echo "::error::Backend container did not serve GET /"
+  echo "Backend container did not serve GET /"
   docker logs calendar-backend-validate
   exit 1
 fi
