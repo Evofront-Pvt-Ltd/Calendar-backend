@@ -40,7 +40,7 @@ spec:
       containers:
         - name: calendar-backend
           image: calendar-backend:placeholder
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8000
